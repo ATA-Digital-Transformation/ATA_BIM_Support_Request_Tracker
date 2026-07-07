@@ -777,7 +777,7 @@ tbody tr:hover td.col-hl{background:#F5EDD6!important;}
 <!-- ══ TOAST ════════════════════════════════════════════════ -->
 <div class="toast" id="toast"></div>
 <script>
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxcTmsGgfelrxrGCjWmEbpP6zp-WY2q2VP4zXAgW2pIenP1vQ4fOcvf-ZJDIGNEc_O_/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyYFNAOanWaqhRpXJdsH3aG_V3S6BDEnlG9_EDSG3x3ImZ--vn6GfVAIo1wqHZ_3lNt/exec";
 
 // ── State ─────────────────────────────────────────────────────
 let allData=[], projects=[], assignees=[], categories=[], historyData=[];
@@ -967,7 +967,7 @@ function unlockManage(){
 // DATA LOAD
 // ════════════════════════════════════════════════════════════
 async function loadData(){
-  if(APPS_SCRIPT_URL==="https://script.google.com/macros/s/AKfycbxcTmsGgfelrxrGCjWmEbpP6zp-WY2q2VP4zXAgW2pIenP1vQ4fOcvf-ZJDIGNEc_O_/exec"){
+  if(APPS_SCRIPT_URL==="https://script.google.com/macros/s/AKfycbyYFNAOanWaqhRpXJdsH3aG_V3S6BDEnlG9_EDSG3x3ImZ--vn6GfVAIo1wqHZ_3lNt/exec"){
     document.getElementById("configBanner").classList.add("show");
     document.getElementById("tableBody").innerHTML=`<tr class="state-row"><td colspan="13"><div class="empty-notice"><strong>Setup required — paste Apps Script URL</strong></div></td></tr>`;
     setSyncState("idle"); return;
