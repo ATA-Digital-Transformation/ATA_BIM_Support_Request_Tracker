@@ -298,8 +298,8 @@ body.dark .notif-panel{background:var(--white);}
 .tab-group-menu .tab-item.active{background:var(--navy-deep);color:#fff;}
 body.dark .tab-group-menu{background:var(--white);border-color:var(--grey-hair);}
 
-.tt-add-dropdown{position:relative;display:inline-block;}
-.tt-add-menu{display:none;position:absolute;top:100%;left:0;margin-top:4px;background:var(--white);border:1px solid var(--grey-hair);border-radius:var(--r);box-shadow:var(--shadow-md);min-width:220px;z-index:150;flex-direction:column;padding:6px;}
+.tt-add-dropdown{display:inline-block;}
+.tt-add-menu{display:none;background:var(--white);border:1px solid var(--grey-hair);border-radius:var(--r);box-shadow:var(--shadow-md);min-width:220px;z-index:250;flex-direction:column;padding:6px;}
 .tt-add-menu.open{display:flex;}
 .tt-add-menu button{background:none;border:none;text-align:left;padding:9px 12px;font-size:12.5px;font-weight:600;border-radius:6px;cursor:pointer;color:var(--ink);}
 .tt-add-menu button:hover{background:var(--paper);}
@@ -485,6 +485,10 @@ thead .gantt-daycell.gantt-today-col{background:transparent!important;color:var(
 .gantt-milestone-diamond{display:block;width:14px;height:14px;margin:auto;background:#8E44AD;transform:rotate(45deg);box-shadow:0 1px 2px rgba(0,0,0,.25);cursor:pointer;}
 .tt-milestone-row{background:#FAF5FD;}
 body.dark .tt-milestone-row{background:#241a30;}
+.tt-highlight-row{background:#FFF7E0!important;}
+.tt-highlight-row td{position:relative;}
+.tt-highlight-row td:first-child::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--amber);}
+body.dark .tt-highlight-row{background:#3a3016!important;}
 .gantt-overdue-flag{position:absolute;right:2px;top:50%;transform:translateY(-50%);font-size:10px;line-height:1;color:var(--red);}
 .gantt-mini-bar.bar-start{border-radius:8px 0 0 8px;}
 .gantt-mini-bar.bar-end{border-radius:0 8px 8px 0;}
@@ -806,6 +810,8 @@ body.dark .datagrid tbody tr.dg-group-row td{background:rgba(255,255,255,.03);}
 .toast.show{transform:translateY(0);opacity:1;}
 .toast.success{border-left:4px solid var(--green);}
 .toast.error{border-left:4px solid var(--red);}
+.toast.loading{border-left:4px solid var(--navy-text-mid);}
+.toast.loading::before{content:"";display:inline-block;width:10px;height:10px;margin-right:8px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .7s linear infinite;vertical-align:-1px;}
 
 /* ── SAVE STATUS BAR — persistent "Saving…" pill, bottom-center. Unlike
    .toast (a brief one-off confirmation), this stays visible for the whole
@@ -1288,6 +1294,11 @@ body.dark .datagrid tbody tr.dg-group-row td{background:rgba(255,255,255,.03);}
           <div id="orgAdminList"></div>
         </div>
         <div class="settings-group" style="margin-top:14px;">
+          <div class="settings-group-title">Task Statuses</div>
+          <div class="settings-info" style="margin-bottom:8px;">These are the statuses offered everywhere a task's status is picked (Add Task, bulk add, Sheet/Gantt/Table). "No dates" hides and clears Start/Due when that status is chosen — for statuses like TBC where timing isn't set yet. "Highlight" gives that status's rows a distinguishing background everywhere they appear, so they stand out at a glance.</div>
+          <div id="statusAdminList"></div>
+        </div>
+        <div class="settings-group" style="margin-top:14px;">
           <div class="settings-group-title">Email Settings</div>
           <div class="settings-info" style="margin-bottom:8px;">Turn individual email types on or off, and set what time the daily summaries go out. These are global switches — the per-request "notify" checkboxes still control whether an individual email fires, but only when the matching type below is on. (This is email specifically — for the in-app 🔔 notification bell, see "Notification Center Settings" below.)</div>
           <div class="settings-row"><div class="settings-label">Specialist assigned to a request</div><div class="settings-control"><input type="checkbox" id="cfg-emailAssignment"></div></div>
@@ -1393,8 +1404,8 @@ body.dark .datagrid tbody tr.dg-group-row td{background:rgba(255,255,255,.03);}
       <div class="form-group full"><label>Task Name *</label><input type="text" id="at-task" placeholder="Task name"></div>
       <div class="form-group" id="at-assignee-wrap" style="display:none;"><label>Assignee</label><select id="at-assignee"></select></div>
       <div class="form-group" id="at-start-wrap"><label>Start Date</label><span class="dmy-date-wrap"><input type="hidden" id="at-start"><input type="text" class="dmy-date-display" readonly placeholder="dd/mm/yyyy" onclick="openStandaloneDatePicker('at-start',this)"></span></div>
-      <div class="form-group"><label id="at-end-label">End Date</label><span class="dmy-date-wrap"><input type="hidden" id="at-end"><input type="text" class="dmy-date-display" readonly placeholder="dd/mm/yyyy" onclick="openStandaloneDatePicker('at-end',this)"></span></div>
-      <div class="form-group" id="at-status-wrap"><label>Status</label><select id="at-status"></select></div>
+      <div class="form-group" id="at-end-wrap"><label id="at-end-label">End Date</label><span class="dmy-date-wrap"><input type="hidden" id="at-end"><input type="text" class="dmy-date-display" readonly placeholder="dd/mm/yyyy" onclick="openStandaloneDatePicker('at-end',this)"></span></div>
+      <div class="form-group" id="at-status-wrap"><label>Status</label><select id="at-status" onchange="onAddTaskStatusChange_()"></select></div>
       <div class="form-group"><label>Task Type</label><select id="at-tasktype"><option value="">— None —</option></select></div>
       <div class="form-group full"><label>Comment</label><input type="text" id="at-comment" placeholder="Optional note"></div>
       <div class="form-group full" id="at-notify-wrap" style="display:flex;align-items:center;gap:8px;padding-top:6px;">
@@ -1620,7 +1631,49 @@ function refreshTTCategoryLists(){
   GANTT_EDITABLE_CATEGORIES=myTodoCategories.filter(c=>c!=="Tracker Tasks");
   TT_ALL_CATEGORIES=myTodoCategories.slice();
 }
-const GANTT_STATUSES=["To Do","In Progress","Done","On Hold"];
+// ── Task Statuses — configurable in Settings ("Task Statuses" grid) instead
+// of hardcoded. Each status can be marked "No dates" (Start/Due are hidden
+// and cleared when adding a task with that status — for things like TBC
+// where the timing isn't set yet) and/or "Highlight" (the task's row gets a
+// distinguishing background wherever it's shown). GANTT_STATUSES itself
+// stays just the plain name list — every existing dropdown/filter/column
+// that already reads it (Add Task modal, bulk-add rows, Sheet/Gantt/Table
+// filters and inline-edit cells) automatically reflects whatever's
+// configured, with no other code changes needed. Stored as one more
+// settings JSON blob (same trick as tabConfig/orgStructure above) — no
+// backend schema change required. ──
+let GANTT_STATUSES=["To Do","In Progress","Done","On Hold"];
+function getStatusConfig(){
+  let cfg={statuses:[
+    {name:"To Do",noDates:false,highlight:false},
+    {name:"In Progress",noDates:false,highlight:false},
+    {name:"Done",noDates:false,highlight:false},
+    {name:"On Hold",noDates:false,highlight:false},
+    {name:"TBC",noDates:true,highlight:true},
+    {name:"Pending",noDates:true,highlight:true}
+  ]};
+  try{ if(appSettings.taskStatuses){ const parsed=JSON.parse(appSettings.taskStatuses); if(parsed&&Array.isArray(parsed.statuses)&&parsed.statuses.length)cfg=parsed; } }catch(e){}
+  return cfg;
+}
+function refreshGanttStatuses_(){ GANTT_STATUSES=getStatusConfig().statuses.map(s=>s.name); }
+function statusMeta(name){ return getStatusConfig().statuses.find(s=>s.name===name)||{name,noDates:false,highlight:false}; }
+function statusNoDates(name){ return !!statusMeta(name).noDates; }
+function statusHighlight(name){ return !!statusMeta(name).highlight; }
+async function saveStatusConfig(cfg,successMsg){
+  appSettings.taskStatuses=JSON.stringify(cfg);
+  refreshGanttStatuses_();
+  setSyncState("syncing",null,false);
+  try{
+    const settings={};SETTINGS_KEYS.forEach(k=>{settings[k]=appSettings[k]!==undefined?appSettings[k]:"";});
+    settings.taskStatuses=appSettings.taskStatuses;
+    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
+    const json=await res.json();
+    if(!json.success)throw new Error(json.error||"Failed");
+    setSyncState("ok"); if(successMsg)showToast(successMsg,"success");
+    if(typeof renderStatusAdmin==="function")renderStatusAdmin();
+    if(currentMyToDoName)rerenderMyToDoView(currentMyToDoName);
+  }catch(err){setSyncState("error");showToast("Could not save: "+err.message,"error");}
+}
 const _ttAutoScrolledSlugs=new Set(); // tracks which Gantt/Sheet views have already auto-scrolled to today this page session, so a background data refresh doesn't keep resetting the user's scroll position
 const GANTT_STATUS_COLOR={"To Do":"#FFF2CC","In Progress":"#BDD7EE","Done":"#C6EFCE","On Hold":"#FCE4D6"};
 let assigneeSlugMap={}; // slug -> assignee name
@@ -2040,18 +2093,43 @@ function closeTabGroupMenus(){
 document.addEventListener("click",e=>{ if(!e.target.closest(".tab-group")&&!e.target.closest(".tab-group-menu"))closeTabGroupMenus(); });
 
 // ── "+ Add ▾" dropdown (My-To-Do toolbar) — Add Task / Add Milestone / Add
-// Multiple Tasks / Add Multiple Milestones. Same open/close pattern as the
-// manager's tab-group dropdown above. ──
-function toggleTTAddMenu(slug,evt){
+// Multiple Tasks / Add Multiple Milestones. Built and appended to <body> as
+// a fixed-position menu (same technique as the ⋮ task context menu below),
+// NOT an absolutely-positioned child of the toolbar — that earlier version
+// widened its scrolling ancestor and forced an unwanted horizontal scrollbar
+// on the page every time it opened.
+function toggleTTAddMenu(slug,name,evt){
   if(evt)evt.stopPropagation();
-  const wasOpen=document.getElementById("ttAddMenu-"+slug)?.classList.contains("open");
+  const wasOpen=!!document.getElementById("ttAddMenu");
   closeTTAddMenu();
   if(wasOpen)return;
-  document.getElementById("ttAddMenu-"+slug)?.classList.add("open");
+  const btn=evt.currentTarget;
+  const rect=btn.getBoundingClientRect();
+  const menu=document.createElement("div");
+  menu.className="tt-add-menu open"; menu.id="ttAddMenu";
+  menu.style.position="fixed";
+  menu.style.top=(rect.bottom+4)+"px";
+  menu.style.left=Math.max(8,Math.min(rect.left,window.innerWidth-232))+"px";
+  menu.innerHTML=`
+    <button data-a="task">＋ Add Task</button>
+    <button data-a="milestone">◆ Add Milestone</button>
+    <div class="tt-add-menu-divider"></div>
+    <button data-a="multitask">▤ Add Multiple Tasks</button>
+    <button data-a="multimilestone">▤ Add Multiple Milestones</button>`;
+  menu.addEventListener("click",e=>{
+    const b=e.target.closest("button[data-a]"); if(!b)return;
+    const action=b.dataset.a;
+    closeTTAddMenu();
+    if(action==="task")openAddTaskModal(slug,name);
+    else if(action==="milestone")openAddMilestoneModal(slug,name);
+    else if(action==="multitask")openAddMultipleModal(slug,name,"task");
+    else if(action==="multimilestone")openAddMultipleModal(slug,name,"milestone");
+  });
+  document.body.appendChild(menu);
   requestAnimationFrame(()=>document.addEventListener("click",closeTTAddMenu,{once:true}));
 }
 function closeTTAddMenu(){
-  document.querySelectorAll(".tt-add-menu.open").forEach(m=>m.classList.remove("open"));
+  const m=document.getElementById("ttAddMenu"); if(m)m.remove();
 }
 
 // ── Shared hover tooltip for every task bar in Sheet/Gantt/Workload views.
@@ -2694,14 +2772,7 @@ function renderMyToDo(name){
       <button class="btn btn-ghost btn-sm"${managerUnlocked?"":' style="margin-left:auto;"'} onclick="exportTeamTasksExcel()" title="Export the whole Team Tracker to Excel — one tab per category">⬇ Export</button>
       <button class="btn btn-ghost btn-sm" onclick="triggerImportTeamTasks()" title="Re-import an edited Team Tracker Excel file">⬆ Import</button>
       <div class="tt-add-dropdown" id="ttAddDropdown-${slug}">
-        <button class="btn btn-ghost btn-sm" onclick="toggleTTAddMenu('${slug}',event)">+ Add ▾</button>
-        <div class="tt-add-menu" id="ttAddMenu-${slug}">
-          <button onclick="closeTTAddMenu();openAddTaskModal('${slug}','${name.replace(/'/g,"\\'")}')">＋ Add Task</button>
-          <button onclick="closeTTAddMenu();openAddMilestoneModal('${slug}','${name.replace(/'/g,"\\'")}')">◆ Add Milestone</button>
-          <div class="tt-add-menu-divider"></div>
-          <button onclick="closeTTAddMenu();openAddMultipleModal('${slug}','${name.replace(/'/g,"\\'")}','task')">▤ Add Multiple Tasks</button>
-          <button onclick="closeTTAddMenu();openAddMultipleModal('${slug}','${name.replace(/'/g,"\\'")}','milestone')">▤ Add Multiple Milestones</button>
-        </div>
+        <button class="btn btn-ghost btn-sm" onclick="toggleTTAddMenu('${slug}','${name.replace(/'/g,"\\'")}',event)">+ Add ▾</button>
       </div></div>
     <div id="mytodo-view-${slug}"></div>`;
 
@@ -2829,6 +2900,7 @@ function buildGroupedTaskRows(tasks,slug,viewKey,rightCellFn,rightEmptyCellHtml)
       projTasks.forEach((t,i)=>{
         const overdue=isTeamTaskOverdue(t);
         const isMilestone=t.status==="Milestone"||t.isMilestone;
+        const rowHighlight=statusHighlight(t.status);
         const editable=GANTT_EDITABLE_CATEGORIES.includes(t.category)||t.category==="Tracker Tasks";
         // cls: the .ttcol-* width class (always present, keeps the column
         // aligned regardless of how many cells precede it in this row).
@@ -2838,7 +2910,7 @@ function buildGroupedTaskRows(tasks,slug,viewKey,rightCellFn,rightEmptyCellHtml)
         const selected=selectedTTTaskId===t.id;
         const rowAttrs=`data-task-id="${esc(t.id)}" onclick="toggleTTRowSelect('${t.id}')"`;
         const borderAttr=groupBorderStyleAttr(i===0?boundaryKey:projKey,i===0,gIdx);
-        leftRows.push(`<tr class="${overdue?"gantt-overdue":""}${selected?" gantt-row-selected":""}${isMilestone?" tt-milestone-row":""}" ${rowAttrs}${borderAttr}>
+        leftRows.push(`<tr class="${overdue?"gantt-overdue":""}${selected?" gantt-row-selected":""}${isMilestone?" tt-milestone-row":""}${rowHighlight?" tt-highlight-row":""}" ${rowAttrs}${borderAttr}>
           ${!catCellWritten?catCellHtml:""}
           ${i===0?`<td class="gantt-cat-cell gantt-merge-cell ttcol-proj" data-group-key="proj:${projKey}" rowspan="${projTasks.length}" onclick="toggleTTGroup('proj','${projKey}')">${projLabel}</td>`:""}
           <td${ec("gantt-task-cell ttcol-task","task","text")}>${isMilestone?"◆ ":""}${esc(t.task)}${t.requestNo?` <span class="gantt-source-tag">#${esc(t.requestNo)}</span><button class="tt-jump-link" title="Open Request #${esc(t.requestNo)} in Requests tab" onclick="event.stopPropagation();goToRequestInTab('${esc(t.requestNo)}')">↗</button>`:""}</td>
@@ -2849,7 +2921,7 @@ function buildGroupedTaskRows(tasks,slug,viewKey,rightCellFn,rightEmptyCellHtml)
           <td${ec("ttcol-comment","comment","text")}>${t.comment?esc(t.comment):`<span style="color:#ccc;font-size:11px;">—</span>`}</td>
           <td class="ttcol-action">${menuAllowed&&GANTT_EDITABLE_CATEGORIES.includes(t.category)?`<button class="btn btn-ghost btn-sm" data-tt-id="${t.id}" data-tt-milestone="${isMilestone?1:0}" onclick="openTeamTaskMenu(event)">⋮</button>`:""}</td>
         </tr>`);
-        rightRows.push(`<tr class="${overdue?"gantt-overdue":""}${selected?" gantt-row-selected":""}" ${rowAttrs}${borderAttr}>${rightCellFn(t,overdue)}</tr>`);
+        rightRows.push(`<tr class="${overdue?"gantt-overdue":""}${selected?" gantt-row-selected":""}${rowHighlight?" tt-highlight-row":""}" ${rowAttrs}${borderAttr}>${rightCellFn(t,overdue)}</tr>`);
         catCellWritten=true;
       });
     });
@@ -3367,9 +3439,10 @@ function renderMyToDoTableView(name,slug,tasks){
         projTasks.forEach((t,i)=>{
           const overdue=isTeamTaskOverdue(t);
           const isMilestone=t.status==="Milestone"||t.isMilestone;
+          const rowHighlight=statusHighlight(t.status);
           const editable=GANTT_EDITABLE_CATEGORIES.includes(t.category)||t.category==="Tracker Tasks";
           const ec=(f,type,options)=>editable?` class="editable-cell" onclick="editTeamCell(this,'${t.id}','${f}','${type}'${options?","+JSON.stringify(options).replace(/"/g,"&quot;"):""})"`:"";
-          rows+=`<tr class="${overdue?"gantt-overdue":""}${isMilestone?" tt-milestone-row":""}"${groupBorderStyleAttr(projKey,false,gIdx)}>
+          rows+=`<tr class="${overdue?"gantt-overdue":""}${isMilestone?" tt-milestone-row":""}${rowHighlight?" tt-highlight-row":""}"${groupBorderStyleAttr(projKey,false,gIdx)}>
             <td>${esc(t.category)}</td>
             <td class="gantt-task-cell"${ec("task","text")}>${isMilestone?"◆ ":""}${esc(t.task)}${t.requestNo?` <span class="gantt-source-tag">#${esc(t.requestNo)}</span><button class="tt-jump-link" title="Open Request #${esc(t.requestNo)} in Requests tab" onclick="event.stopPropagation();goToRequestInTab('${esc(t.requestNo)}')">↗</button>`:""}</td>
             <td${isMilestone?"":ec("startDate","date")}>${isMilestone?"—":(esc(t.startDate)||"—")}</td>
@@ -3701,6 +3774,7 @@ function openAddTaskModal(slug,name){
   document.getElementById("at-submit-btn").textContent="Add Task";
   document.getElementById("at-assignee-wrap").style.display="none";
   document.getElementById("at-start-wrap").style.display="";
+  document.getElementById("at-end-wrap").style.display="";
   document.getElementById("at-status-wrap").style.display="";
   document.getElementById("at-end-label").textContent="End Date";
   const allowed=categoryRoleFilterEnabled()?ttCategoriesForAssignee(name):null;
@@ -3717,7 +3791,20 @@ function openAddTaskModal(slug,name){
   ["at-proj","at-task","at-comment"].forEach(id=>document.getElementById(id).value="");
   setDmyHiddenValue("at-start",""); setDmyHiddenValue("at-end","");
   document.getElementById("at-notify").checked=false;
+  onAddTaskStatusChange_();
   document.getElementById("addTaskModalOverlay").classList.add("open");
+}
+// Statuses marked "No dates" in Settings → Task Statuses (e.g. TBC) hide and
+// clear Start/Due — their timing isn't set yet, so there's nothing to pick.
+// Milestone mode already manages this layout itself (fixed "no start, due-
+// date-only" shape) so this is a no-op there.
+function onAddTaskStatusChange_(){
+  if(addTaskModalMode==="milestone")return;
+  const status=document.getElementById("at-status").value;
+  const noDates=statusNoDates(status);
+  document.getElementById("at-start-wrap").style.display=noDates?"none":"";
+  document.getElementById("at-end-wrap").style.display=noDates?"none":"";
+  if(noDates){ setDmyHiddenValue("at-start",""); setDmyHiddenValue("at-end",""); }
 }
 // Milestones only carry a due date — no start, no status choice (always
 // "Milestone"), and per Khaled's answer the assignee is OPTIONAL: it can
@@ -3815,13 +3902,24 @@ function addMultipleRow(){
     <td><select id="am-cat-${i}">${catOpts}</select></td>
     <td><select id="am-proj-${i}">${projOpts}</select></td>
     <td><input type="text" id="am-task-${i}" placeholder="Task name"></td>
-    ${isMilestone?"":`<td>${dmyDateField("am-start-"+i,"")}</td>`}
-    <td>${dmyDateField("am-end-"+i,"")}</td>
-    ${isMilestone?"":`<td><select id="am-status-${i}">${statusOpts}</select></td>`}
+    ${isMilestone?"":`<td id="am-start-td-${i}">${dmyDateField("am-start-"+i,"")}</td>`}
+    <td id="am-end-td-${i}">${dmyDateField("am-end-"+i,"")}</td>
+    ${isMilestone?"":`<td><select id="am-status-${i}" onchange="onAddMultipleRowStatusChange_(${i})">${statusOpts}</select></td>`}
     <td><select id="am-tasktype-${i}">${typeOpts}</select></td>
     <td><input type="text" id="am-comment-${i}" placeholder="Optional"></td>
     <td><button class="btn btn-ghost btn-sm" onclick="removeAddMultipleRow(${i})" title="Remove row">✕</button></td>`;
   document.getElementById("amTableBody").appendChild(tr);
+  if(!isMilestone)onAddMultipleRowStatusChange_(i);
+}
+// Same "No dates" behavior as the single Add Task modal, per row.
+function onAddMultipleRowStatusChange_(i){
+  const statusEl=document.getElementById("am-status-"+i);
+  if(!statusEl)return;
+  const noDates=statusNoDates(statusEl.value);
+  const startTd=document.getElementById("am-start-td-"+i), endTd=document.getElementById("am-end-td-"+i);
+  if(startTd)startTd.style.display=noDates?"none":"";
+  if(endTd)endTd.style.display=noDates?"none":"";
+  if(noDates){ setDmyHiddenValue("am-start-"+i,""); setDmyHiddenValue("am-end-"+i,""); }
 }
 function removeAddMultipleRow(i){
   const tr=document.getElementById("am-row-"+i);
@@ -3864,7 +3962,9 @@ async function submitAddMultipleModal(){
   items.forEach((it,idx)=>teamTracker.push(Object.assign({id:tempIds[idx]},it)));
   closeAddMultipleModal();
   switchTab("mytodo-"+slug);
-  setSyncState("syncing",`Adding ${items.length} ${isMilestone?"milestones":"tasks"}…`);
+  const loadingMsg=`Adding ${items.length} ${isMilestone?"milestones":"tasks"}…`;
+  setSyncState("syncing",loadingMsg,false);
+  showToast(loadingMsg,"loading");
   try{
     const results=await Promise.all(items.map(it=>
       fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(Object.assign({action:"addTeamTask",notify:!!notify},it))})
@@ -3914,7 +4014,8 @@ async function submitAddTaskModal(){
   teamTracker.push(optimisticTask);
   closeAddTaskModal();
   switchTab("mytodo-"+slug);
-  setSyncState("syncing","Adding task…");
+  setSyncState("syncing","Adding task…",false);
+  showToast("Adding task…","loading");
   try{
     const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({
       action:"addTeamTask",category:cat,assignee:assigneeName,project:proj,task:task,
@@ -4078,7 +4179,8 @@ async function duplicateTeamTaskAction(id){
   const clone=Object.assign({},src,{id:tempId});
   teamTracker.push(clone);
   if(currentMyToDoName)rerenderMyToDoView(currentMyToDoName);
-  setSyncState("syncing","Duplicating task…");
+  setSyncState("syncing","Duplicating task…",false);
+  showToast("Duplicating task…","loading");
   try{
     const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"duplicateTeamTask",id})});
     const json=await res.json();
@@ -4098,7 +4200,8 @@ async function convertTeamTaskToMilestoneAction(id){
   const prev={status:t.status,isMilestone:t.isMilestone,startDate:t.startDate};
   t.status="Milestone"; t.isMilestone=true; t.startDate="";
   if(currentMyToDoName)rerenderMyToDoView(currentMyToDoName);
-  setSyncState("syncing","Converting to milestone…");
+  setSyncState("syncing","Converting to milestone…",false);
+  showToast("Converting to milestone…","loading");
   try{
     const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"convertTeamTaskToMilestone",id})});
     const json=await res.json();
@@ -4138,7 +4241,8 @@ async function submitMoveTeamTaskModal(){
     if(category)t.category=category;
     if(currentMyToDoName)rerenderMyToDoView(currentMyToDoName);
   }
-  setSyncState("syncing","Moving task…");
+  setSyncState("syncing","Moving task…",false);
+  showToast("Moving task…","loading");
   try{
     const body={action:"moveTeamTask",id};
     if(project)body.project=project;
@@ -4166,7 +4270,8 @@ async function deleteTeamTask(id){
   // Guarded for the same reason as editTeamCell's commit() — this fires
   // before the actual delete request, so it must never be able to block it.
   try{ if(removed&&currentMyToDoName)rerenderMyToDoView(currentMyToDoName); }catch(renderErr){ console.error("My-To-Do re-render failed (delete will still proceed):",renderErr); }
-  setSyncState("syncing","Deleting task…");
+  setSyncState("syncing","Deleting task…",false);
+  showToast("Deleting task…","loading");
   try{
     const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"deleteTeamTask",id})});
     const json=await res.json();
@@ -4288,7 +4393,7 @@ function grantManagerAccess(){
   document.getElementById("dashFilterSpecialist").innerHTML=`<option value="">All Specialists</option>`+assignees.map(a=>`<option>${esc(a.name)}</option>`).join("");
   document.getElementById("dashFilterProject").innerHTML=`<option value="">All Projects</option>`+projects.map(p=>`<option>${esc(p.name)}</option>`).join("");
   document.getElementById("dashFilterCategory").innerHTML=`<option value="">All Categories</option>`+categories.map(c=>`<option>${esc(c.name)}</option>`).join("");
-  renderDashboard(); renderManageLists(); loadSettingsIntoForm(); renderTabAccessAdmin(); renderDashboardWidgetsAdmin(); renderTabOrderAdmin(); renderOrgAdmin(); updateImportRequestsBtnVisibility();
+  renderDashboard(); renderManageLists(); loadSettingsIntoForm(); renderTabAccessAdmin(); renderDashboardWidgetsAdmin(); renderTabOrderAdmin(); renderOrgAdmin(); renderStatusAdmin(); updateImportRequestsBtnVisibility();
 }
 function revokeManagerAccess(){
   managerUnlocked=false;
@@ -4778,6 +4883,7 @@ function applyLoadedData_(json){
   googleClientId=json.googleClientId||null;
   managerEmails=String(json.managerEmails||"").split(",").map(e=>e.trim().toLowerCase()).filter(Boolean);
   appSettings=json.settings||{};
+  refreshGanttStatuses_();
   populateDropdowns(); applyAppSettings(); initRequestsStickyHeader(); renderTable(); updateStats();
   buildAssigneeTabs(); updateManagerTabVisibility();
   renderNotifPanel();
@@ -5827,7 +5933,7 @@ function switchManageTab(tab){
   document.querySelectorAll(".manage-panel").forEach(p=>p.classList.remove("active"));
   document.getElementById(`mtab-${tab}`).classList.add("active");
   document.getElementById(`mpanel-${tab}`).classList.add("active");
-  if(tab==="settings"){renderTabAccessAdmin();renderDashboardWidgetsAdmin();renderOrgAdmin();}
+  if(tab==="settings"){renderTabAccessAdmin();renderDashboardWidgetsAdmin();renderOrgAdmin();renderStatusAdmin();}
   if(tab==="roles"){renderNewRoleCategoryCheckboxes();}
   if(tab==="mytodocats"){renderMyTodoCategoriesList();}
 }
@@ -6136,6 +6242,62 @@ function toggleReportsTo(slug,adminEmail,checked){
   saveOrgConfig(cfg,"Reporting updated");
 }
 
+// ── Task Statuses admin — a datagrid to add/remove statuses and toggle
+// their "No dates" / "Highlight" flags. Status names are editable text
+// (blur/Enter to rename) rather than a fixed set, since categories/task
+// types elsewhere in this app follow the same free-text pattern. ──
+function renderStatusAdmin(){
+  const el=document.getElementById("statusAdminList");
+  if(!el)return;
+  const cfg=getStatusConfig();
+  const rows=cfg.statuses.map((s,idx)=>`<tr>
+      <td><input type="text" value="${esc(s.name)}" onchange="renameTaskStatus(${idx},this.value)"></td>
+      <td style="text-align:center;"><input type="checkbox" ${s.noDates?"checked":""} onchange="toggleTaskStatusFlag(${idx},'noDates',this.checked)"></td>
+      <td style="text-align:center;"><input type="checkbox" ${s.highlight?"checked":""} onchange="toggleTaskStatusFlag(${idx},'highlight',this.checked)"></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="removeTaskStatus(${idx})">Remove</button></td>
+    </tr>`).join("");
+  el.innerHTML=`<div class="datagrid-scroll"><table class="datagrid">
+      <thead><tr><th>Status name</th><th>No dates</th><th>Highlight</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div style="display:flex;gap:8px;margin-top:10px;align-items:center;">
+      <input type="text" id="statusAdminNewName" placeholder="New status name" style="max-width:200px;">
+      <button class="btn btn-primary btn-sm" onclick="addTaskStatus()">+ Add Status</button>
+    </div>`;
+}
+function addTaskStatus(){
+  const nameEl=document.getElementById("statusAdminNewName");
+  const name=nameEl.value.trim();
+  if(!name){showToast("Status name is required","error");return;}
+  const cfg=getStatusConfig();
+  if(cfg.statuses.some(s=>s.name.toLowerCase()===name.toLowerCase())){showToast("That status already exists","error");return;}
+  cfg.statuses.push({name,noDates:false,highlight:false});
+  nameEl.value="";
+  saveStatusConfig(cfg,"Status added");
+}
+function renameTaskStatus(idx,newName){
+  newName=newName.trim();
+  const cfg=getStatusConfig();
+  const s=cfg.statuses[idx]; if(!s)return;
+  if(!newName){renderStatusAdmin();return;} // blank rename — just revert the input
+  const oldName=s.name;
+  if(oldName===newName)return;
+  s.name=newName;
+  saveStatusConfig(cfg,"Status renamed — note: existing tasks already saved with \""+oldName+"\" keep that text until edited");
+}
+function toggleTaskStatusFlag(idx,flag,checked){
+  const cfg=getStatusConfig();
+  const s=cfg.statuses[idx]; if(!s)return;
+  s[flag]=checked;
+  saveStatusConfig(cfg,"Status updated");
+}
+function removeTaskStatus(idx){
+  const cfg=getStatusConfig();
+  if(cfg.statuses.length<=1){showToast("At least one status must remain","error");return;}
+  cfg.statuses.splice(idx,1);
+  saveStatusConfig(cfg,"Status removed");
+}
+
 // ── Personal Dashboard Widgets (admin) — which sections show on each
 // specialist's own "My Dashboard" tab. Checked = visible (default). ──
 function renderDashboardWidgetsAdmin(){
@@ -6318,7 +6480,7 @@ const SETTINGS_KEYS=["defaultStatus","defaultView","defaultSort","rowsPerPage","
   "emailAssignment","emailStatusUpdate","emailSubmissionDate","emailNewTask","emailTaskChange","emailDailySummaryRequests","emailDailySummaryTeam","dailySummaryHour",
   "groupBorderStyle","ttFilterDefaultCategory","ttFilterDefaultStatus","ttFilterDefaultSort",
   "notifCenterShowBadge","notifCenterAssignment","notifCenterStatusChange","notifCenterNewTask","notifCenterTaskChange","notifCenterMilestone",
-  "maxRetryAttempts","recoveryMethod","recoveryStorage","warnBeforeUnload","orgStructure"];
+  "maxRetryAttempts","recoveryMethod","recoveryStorage","warnBeforeUnload","orgStructure","taskStatuses"];
 function loadSettingsIntoForm(){
   const s=appSettings;
   const set=(id,val)=>{
@@ -6882,8 +7044,13 @@ function setSyncState(state,label2,blocking){
 }
 function showToast(msg,type="success"){
   const t=document.getElementById("toast");t.textContent=msg;t.className=`toast ${type} show`;
-  setTimeout(()=>t.classList.remove("show"),3500);
+  clearTimeout(toastHideTimer);
+  // A "loading" toast stays up until replaced by the real result (success/
+  // error) — auto-hiding it after 3.5s would make a slow save look like it
+  // silently vanished. Every other type keeps the normal auto-dismiss.
+  if(type!=="loading")toastHideTimer=setTimeout(()=>t.classList.remove("show"),3500);
 }
+let toastHideTimer=null;
 function esc(str){if(!str)return"";return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 
 document.getElementById("myRequestsBtn").style.display="none";
