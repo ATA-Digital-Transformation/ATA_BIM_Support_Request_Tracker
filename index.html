@@ -11,8 +11,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
-<style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+<style>*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
   --navy:#273745;--navy-deep:#1a2630;--navy-mid:#33414D;--navy-light:#3E5060;
   --navy-text:var(--navy);--navy-text-mid:var(--navy-mid);
@@ -928,7 +927,7 @@ body.dark .datagrid tbody tr.dg-group-row td{background:rgba(255,255,255,.03);}
   <div class="login-card">
     <p>Sign in with your ATA Google Workspace account to submit and track BIM support requests.</p>
     <div id="googleSignInBtn"></div>
-    <button class="btn btn-ghost btn-sm" onclick="browseWithoutLogin()">Browse without signing in →</button>
+    
   </div>
 </div>
 
@@ -970,7 +969,8 @@ body.dark .datagrid tbody tr.dg-group-row td{background:rgba(255,255,255,.03);}
           <div class="profile-row"><span class="profile-label">Theme</span><div class="profile-control"><select id="prof-theme" onchange="onProfileThemeChange()"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div>
         </div>
         <div class="profile-actions">
-          <button class="btn btn-ghost btn-sm" style="flex:1;" onclick="signOut()">Sign Out</button>
+          <button class="btn btn-ghost btn-sm" onclick="downloadRecoveryReport_()">Download recovery report</button>
+<button class="btn btn-ghost btn-sm" style="flex:1;" onclick="signOut()">Sign Out</button>
         </div>
       </div>
     </div>
@@ -1238,7 +1238,7 @@ body.dark .datagrid tbody tr.dg-group-row td{background:rgba(255,255,255,.03);}
           <div class="settings-row"><div class="settings-label">Specialists see</div><div class="settings-control"><select id="cfg-specialistVisibility"><option value="all">All Requests</option><option value="assigned">Only Assigned to Them</option></select></div></div>
           <div class="settings-row"><div class="settings-label">Show Cancelled requests</div><div class="settings-control"><input type="checkbox" id="cfg-showCancelled" checked></div></div>
           <div class="settings-row"><div class="settings-label">Hide Done requests older than</div><div class="settings-control"><select id="cfg-hideDoneAfter"><option value="0">Show All</option><option value="30">30 Days</option><option value="60">60 Days</option><option value="90">90 Days</option></select></div></div>
-          <div class="settings-row"><div class="settings-label">"Import" button (Requests tab) visible to</div><div class="settings-control"><select id="cfg-importRequestsVisibility"><option value="manager">Manager Only</option><option value="all">Everyone</option></select></div></div>
+          <div class="settings-row"><div class="settings-label">"Import" button (Requests tab) visible to</div><div class="settings-control"><select id="cfg-importRequestsVisibility"><option value="manager">Manager Only</option></select></div></div>
         </div>
         <div class="settings-group" style="margin-top:14px;">
           <div class="settings-group-title">Requests Tab — Table Appearance</div>
@@ -1358,9 +1358,9 @@ body.dark .datagrid tbody tr.dg-group-row td{background:rgba(255,255,255,.03);}
           <div class="settings-row"><div class="settings-label">Save retry attempts<small>How many times to automatically retry a failed save before giving up</small></div><div class="settings-control"><input type="number" id="cfg-maxRetryAttempts" min="1" max="5" style="width:70px;"></div></div>
           <div class="settings-row"><div class="settings-label">Recovery method<small>How to protect an in-progress save if the page closes or reloads</small></div><div class="settings-control"><select id="cfg-recoveryMethod">
             <option value="off">Off — no protection</option>
-            <option value="beacon">Quick send on close only</option>
+            <option value="beacon">Queued recovery (legacy preference)</option>
             <option value="queue">Resume on reopen only</option>
-            <option value="both">Both (recommended)</option>
+            <option value="both">Queued recovery (recommended)</option>
           </select></div></div>
           <div class="settings-row"><div class="settings-label">Recovery storage<small>Where pending saves are held until confirmed</small></div><div class="settings-control"><select id="cfg-recoveryStorage">
             <option value="local">Browser storage — survives full close (recommended)</option>
@@ -1612,8 +1612,302 @@ body.dark .datagrid tbody tr.dg-group-row td{background:rgba(255,255,255,.03);}
      login now resolves and could still be mid-download when a dashboard
      chart tried to use it. -->
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
-<script>
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyYFNAOanWaqhRpXJdsH3aG_V3S6BDEnlG9_EDSG3x3ImZ--vn6GfVAIo1wqHZ_3lNt/exec";
+<script>// Public deployment URL, not a secret. Change only if using a new deployment.
+const TRACKER_CONFIG = Object.freeze({
+  appsScriptUrl: "https://script.google.com/macros/s/AKfycbyYFNAOanWaqhRpXJdsH3aG_V3S6BDEnlG9_EDSG3x3ImZ--vn6GfVAIo1wqHZ_3lNt/exec"
+});
+</script>
+<script>/* Authentication, transport and account-scoped recovery. No dependencies. */
+const trackerAuth={token:null,user:null,epoch:0,boot:null,googleReady:false,expiryTimer:null};
+const trackerSnapshots={requests:new Map(),tasks:new Map(),versions:new Map()};
+let trackerWriteChain=Promise.resolve();
+let trackerMutationRevision_=0;
+let trackerReadSequence_=0;
+const trackerPendingWrites_=new Map();
+const recentRequestRows_=new Set();
+let trackerReplayRunning_=false;
+function trackerSessionKey_(){return 'ata-session-v2:'+TRACKER_CONFIG.appsScriptUrl;}
+function forgetTrackerSession_(){try{localStorage.removeItem(trackerSessionKey_());sessionStorage.removeItem('ata-session-v1:'+TRACKER_CONFIG.appsScriptUrl);}catch(e){}}
+function savedTrackerToken_(){
+  try{const s=JSON.parse(localStorage.getItem(trackerSessionKey_())||'null');if(s&&typeof s.token==='string'&&s.token.startsWith('ata_session_')&&s.exp*1000>Date.now()+30000)return s.token;}catch(e){}
+  forgetTrackerSession_();return null;
+}
+const trackerInitialMarkup_=new Map();
+const trackerReadActions=new Set(['getData','getKpiData']);
+const trackerPermanentErrors=new Set(['FORBIDDEN','INVALID_REQUEST','CONFLICT','NOT_FOUND','OP_CONFLICT','OP_UNCERTAIN','SETUP_REQUIRED','IDENTITY_BINDING_REQUIRED']);
+
+function authMessage_(message){
+  const screen=document.getElementById('loginScreen');
+  screen.classList.add('show');
+  let status=document.getElementById('secureLoginStatus');
+  if(!status){status=document.createElement('p');status.id='secureLoginStatus';status.setAttribute('role','status');status.style.cssText='color:white;max-width:400px;text-align:center;padding:12px';screen.appendChild(status);}
+  status.textContent=message;
+}
+async function bootstrapTracker_(){
+  if(trackerAuth.token)return;
+  if(trackerAuth.boot)return trackerAuth.boot;
+  trackerAuth.boot=(async()=>{
+    for(const id of ['assigneeTabPanels','dashContent','manageContent','notifList']){
+      const el=document.getElementById(id);if(el&&!trackerInitialMarkup_.has(id))trackerInitialMarkup_.set(id,el.innerHTML);
+    }
+    // Never display or replay unauthenticated snapshots from the old version.
+    try{localStorage.removeItem('ata-user');localStorage.removeItem('ata-bim-local-cache-v1');}catch(e){}
+    const remembered=savedTrackerToken_();
+    if(remembered){
+      hideLoginScreen();
+      const status=document.getElementById('loadStatus');
+      if(status)status.textContent='Loading your workspace…';
+      await acceptGoogleSignIn_({credential:remembered},true);
+    }else authMessage_('Sign in with your approved Google account to open the tracker.');
+    try{
+      const res=await fetch(TRACKER_CONFIG.appsScriptUrl,{cache:'no-store',credentials:'omit'});
+      const data=await res.json();
+      if(!data.success || !data.authenticationRequired || data.apiVersion!=='ata-secure-v1')throw new Error(data.error||'Deploy the updated Apps Script before using this website.');
+      googleClientId=data.googleClientId;
+      await initializeSecureGoogleAuth_();
+    }catch(e){if(!trackerAuth.user)authMessage_(e.message+' Use Refresh to try again.');}
+    finally{hideLoadScreen();trackerAuth.boot=null;}
+  })();
+  return trackerAuth.boot;
+}
+async function initializeSecureGoogleAuth_(){
+  if(!googleClientId || trackerAuth.googleReady)return;
+  for(let i=0;i<100;i++){
+    if(window.google&&google.accounts&&google.accounts.id){
+      if(trackerAuth.googleReady)return;
+      trackerAuth.googleReady=true;
+      google.accounts.id.initialize({client_id:googleClientId,callback:onGoogleSignIn,auto_select:false,cancel_on_tap_outside:false});
+      google.accounts.id.renderButton(document.getElementById('googleSignInBtn'),{theme:'outline',size:'large',text:'signin_with',shape:'rectangular',width:240});
+      return;
+    }
+    await new Promise(r=>setTimeout(r,100));
+  }
+  if(!trackerAuth.user)authMessage_('Google sign-in could not load. Check your connection and refresh the page.');
+}
+async function acceptGoogleSignIn_(result,restoring=false){
+  if(!result||!result.credential)return;
+  const epoch=++trackerAuth.epoch;
+  trackerAuth.token=result.credential;
+  if(!restoring)authMessage_('Checking your account…');
+  try{
+    const data=await sendTrackerRequest_({action:'getData'},epoch);
+    if(epoch!==trackerAuth.epoch)return;
+    trackerAuth.user=data.user;
+    trackerAuth.token=data.sessionCredential||result.credential;
+    try{if(trackerAuth.token.startsWith('ata_session_'))localStorage.setItem(trackerSessionKey_(),JSON.stringify({token:trackerAuth.token,exp:data.user.exp}));}catch(e){}
+    currentUser=data.user;
+    rememberServerData_(data);
+    applyLoadedData_(data);
+    hideLoginScreen();hideLoadScreen();setSyncState('ok');
+    loadProfile();restoreActiveTab_();
+    clearTimeout(trackerAuth.expiryTimer);
+    scheduleTrackerExpiry_();
+    await replaySecureQueue_();
+  }catch(e){
+    if(epoch===trackerAuth.epoch){forgetTrackerSession_();trackerAuth.token=null;trackerAuth.user=null;currentUser=null;authMessage_(e.message);}
+  }
+}
+function scheduleTrackerExpiry_(){
+  clearTimeout(trackerAuth.expiryTimer);
+  if(!trackerAuth.user)return;
+  const remaining=trackerAuth.user.exp*1000-Date.now();
+  if(remaining<=0){expireTrackerSession_();return;}
+  // Browser timers overflow above roughly 24.8 days; recheck in smaller steps.
+  trackerAuth.expiryTimer=setTimeout(scheduleTrackerExpiry_,Math.min(remaining,86400000));
+}
+function expireTrackerSession_(){
+  forgetTrackerSession_();
+  trackerAuth.token=null;trackerAuth.epoch++;
+  // Preserve only account-scoped queued changes. Sensitive content is cleared.
+  clearTrackerData_();
+  authMessage_('Your sign-in expired. Sign in again to continue and recover pending changes.');
+}
+function clearTrackerData_(){
+  currentUser=null;managerUnlocked=false;trackerAuth.user=null;
+  allData=[];teamTracker=[];historyData=[];notifications=[];assignees=[];projects=[];roles=[];categories=[];
+  trackerSnapshots.requests.clear();trackerSnapshots.tasks.clear();trackerSnapshots.versions.clear();
+  try{updateNavUser();renderTable();updateStats();revokeManagerAccess();}catch(e){}
+  for(const [id,markup] of trackerInitialMarkup_){const el=document.getElementById(id);if(el)el.innerHTML=markup;}
+  if(typeof lastAssigneeTabsSignature_!=='undefined')lastAssigneeTabsSignature_=null;
+  for(const el of document.querySelectorAll('.modal-overlay.open,.drawer.open'))el.classList.remove('open');
+}
+async function secureSignOut_(){
+  const credential=trackerAuth.token;
+  forgetTrackerSession_();
+  trackerAuth.token=null;trackerAuth.epoch++;clearTimeout(trackerAuth.expiryTimer);
+  if(window.google&&google.accounts)google.accounts.id.disableAutoSelect();
+  // Reload clears every in-memory render and prevents late responses being shown.
+  clearTrackerData_();
+  try{
+    if(credential){const res=await fetch(TRACKER_CONFIG.appsScriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},credentials:'omit',body:JSON.stringify({action:'signOut',idToken:credential})});const data=await res.json();if(!data.success)throw new Error(data.error);}
+  }catch(e){authMessage_('Signed out on this browser. The server could not confirm session revocation.');return;}
+  window.location.reload();
+}
+function rememberServerData_(data){
+  if(data.data){trackerSnapshots.requests.clear();data.data.forEach(r=>trackerSnapshots.requests.set(r.requestId,{...r}));}
+  if(data.teamTracker){trackerSnapshots.tasks.clear();data.teamTracker.forEach(t=>trackerSnapshots.tasks.set(t.id,{...t}));}
+}
+function prepareTrackerPayload_(input){
+  const p=JSON.parse(JSON.stringify(input));delete p.idToken;
+  if(['update','deleteRow'].includes(p.action)){
+    const r=p.requestId?trackerSnapshots.requests.get(p.requestId):allData.find(r=>p.rowIndex!==undefined?r.rowIndex===p.rowIndex:String(r.requestNo)===String(p.requestNo));
+    if(!r||!r.requestId)throw Object.assign(new Error('This request is not ready to edit. Refresh the tracker.'),{code:'INVALID_REQUEST'});
+    p.requestId=r.requestId;
+    const saved=trackerSnapshots.requests.get(p.requestId)||r;
+    p.expectedVersion=p.expectedVersion||saved.version;
+    // Drawers submit all fields. Remove unchanged ones to enforce field grants.
+    for(const k of ['requestBy','date','project','priority','category','description','linksPath','submissionDate','bimSpecialist','status','comment']){
+      const earlierChange=Array.from(trackerPendingWrites_.values()).some(q=>q.requestId===p.requestId&&q[k]!==undefined);
+      if(!earlierChange && p[k]!==undefined && String(p[k]??'')===String(saved[k]??''))delete p[k];
+    }
+    delete p.rowIndex;delete p.requestNo;
+  }
+  if(['updateTeamTask','deleteTeamTask','duplicateTeamTask','moveTeamTask','convertTeamTaskToMilestone'].includes(p.action)){
+    const t=trackerSnapshots.tasks.get(p.id);
+    if(!t)throw Object.assign(new Error('Refresh before editing this task.'),{code:'INVALID_REQUEST'});
+    p.expectedVersion=p.expectedVersion||t.version;
+  }
+  if(!trackerReadActions.has(p.action))p.clientOpId=p.clientOpId||crypto.randomUUID();
+  return p;
+}
+async function sendTrackerRequest_(payload,epoch){
+  const readRevision=trackerMutationRevision_;
+  const readSequence=payload.action==='getData'?++trackerReadSequence_:0;
+  if(epoch===undefined)epoch=trackerAuth.epoch;
+  if(!trackerAuth.token)throw Object.assign(new Error('Please sign in to continue.'),{code:'AUTH_REQUIRED'});
+  const res=await fetch(TRACKER_CONFIG.appsScriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},credentials:'omit',cache:'no-store',body:JSON.stringify({...payload,idToken:trackerAuth.token})});
+  const data=await res.json();
+  if(epoch!==trackerAuth.epoch)throw Object.assign(new Error('The signed-in account changed. Sign in again to recover your pending save.'),{code:'AUTH_REQUIRED'});
+  if(readSequence&&(pendingSaveCount>0||readRevision!==trackerMutationRevision_||readSequence!==trackerReadSequence_))throw Object.assign(new Error('Refresh postponed while changes are saving.'),{code:'STALE_READ'});
+  if(!data.success){
+    if(data.code==='AUTH_REQUIRED')expireTrackerSession_();
+    throw Object.assign(new Error(data.error||'The request could not be completed.'),{code:data.code||'SERVER_ERROR'});
+  }
+  if(data.request){
+    const previous=trackerSnapshots.requests.get(data.request.requestId);
+    if(previous)trackerSnapshots.versions.set(previous.version,data.request.version);
+    trackerSnapshots.requests.set(data.request.requestId,{...data.request});
+    const local=allData.find(r=>r.requestId===data.request.requestId);
+    // rowIndex is only a local UI handle. Renumber the whole table on refresh,
+    // never one row at a time (which would collide with another local handle).
+    if(local)local.version=data.request.version;
+  }
+  if(data.task){
+    const previous=trackerSnapshots.tasks.get(data.task.id);
+    if(previous)trackerSnapshots.versions.set(previous.version,data.task.version);
+    trackerSnapshots.tasks.set(data.task.id,{...data.task});
+    const local=teamTracker.find(t=>t.id===data.task.id);if(local)local.version=data.task.version;
+  }
+  rememberServerData_(data);
+  return data;
+}
+function secureQueueKey_(){return trackerAuth.user?'ata-secure-queue-v1:'+trackerAuth.user.sub:null;}
+function readSecureQueue_(){
+  const key=secureQueueKey_();if(!key)return[];
+  try{return JSON.parse(recoveryStore_().getItem(key)||'[]');}catch(e){return[];}
+}
+function writeSecureQueue_(items){
+  const key=secureQueueKey_();if(!key)return;
+  // The queue contains payloads, never ID tokens or another account's data.
+  const clean=items.map(op=>({...op,payload:Object.fromEntries(Object.entries(op.payload).filter(([k])=>k!=='idToken'))}));
+  try{recoveryStore_().setItem(key,JSON.stringify(clean));}catch(e){showToast('Your browser cannot store recovery changes. Keep this page open until saves finish.','error');}
+}
+function persistSecureOp_(p,attempted){const q=readSecureQueue_();let op=q.find(o=>o.id===p.clientOpId);if(!op){op={id:p.clientOpId,ts:Date.now()};q.push(op);}op.payload=p;if(attempted!==undefined)op.attempted=attempted;writeSecureQueue_(q);}
+function removeSecureOp_(id){writeSecureQueue_(readSecureQueue_().filter(o=>o.id!==id));}
+async function secureSaveWithRetry_(input,attemptsOverride){
+  // Resolve immutable identity now, before a deletion/refresh can shift rows.
+  const payload=prepareTrackerPayload_(input);
+  trackerPendingWrites_.set(payload.clientOpId,payload);
+  trackerMutationRevision_++;
+  const epoch=trackerAuth.epoch;
+  if(recoveryMethod_()!=='off')persistSecureOp_(payload,false);
+  pendingSaveCount++;updateSaveStatusBar_();
+  const work=async()=>{
+    if(epoch!==trackerAuth.epoch)throw Object.assign(new Error('Please sign in again.'),{code:'AUTH_REQUIRED'});
+    // Advance only versions produced by our own earlier successful writes.
+    // A refresh from another person's edit is deliberately not a successor.
+    const seen=new Set();
+    while(payload.expectedVersion && trackerSnapshots.versions.has(payload.expectedVersion)&&!seen.has(payload.expectedVersion)){
+      seen.add(payload.expectedVersion);payload.expectedVersion=trackerSnapshots.versions.get(payload.expectedVersion);
+    }
+    return executeSecureSave_(payload,attemptsOverride,epoch);
+  };
+  const next=trackerWriteChain.then(work,work).finally(()=>{trackerPendingWrites_.delete(payload.clientOpId);pendingSaveCount=Math.max(0,pendingSaveCount-1);updateSaveStatusBar_();});
+  trackerWriteChain=next.catch(()=>{});
+  return next;
+}
+async function executeSecureSave_(payload,attemptsOverride,epoch){
+  const attempts=Math.max(1,Math.min(5,Number(attemptsOverride||maxRetryAttempts_())||3));
+  const recover=recoveryMethod_()!=='off';
+  if(recover)persistSecureOp_(payload,true);
+  try{
+    for(let i=0;i<attempts;i++){
+      try{const result=await sendTrackerRequest_(payload,epoch);if(recover)removeSecureOp_(payload.clientOpId);return result;}
+      catch(e){
+        if(trackerPermanentErrors.has(e.code)){
+          // Keep uncertain/conflicting changes for inspection without replaying.
+          if(recover){const q=readSecureQueue_();const op=q.find(o=>o.id===payload.clientOpId);if(op){op.blocked=e.code;op.error=e.message;writeSecureQueue_(q);}}
+          throw e;
+        }
+        if(e.code==='AUTH_REQUIRED'||i===attempts-1)throw e;
+        await new Promise(r=>setTimeout(r,1000*Math.pow(2,i)));
+      }
+    }
+  }finally{}
+}
+async function replaySecureQueue_(){
+  if(trackerReplayRunning_)return;
+  if(!trackerAuth.user||recoveryMethod_()==='off')return;
+  trackerReplayRunning_=true;
+  try{
+  const pending=readSecureQueue_();
+  const blocked=pending.filter(o=>o.blocked);
+  if(blocked.length)showToast(blocked.length+' saved change(s) need review. Open your recovery report.','error');
+  for(const op of pending.filter(o=>!o.blocked)){
+    try{
+      // Exact original identity, revision and payload: never remap stale rows.
+      // An operation that was queued but never attempted may follow a recovered
+      // successful write from this same account. Only then advance its revision.
+      if(!op.attempted){const seen=new Set();while(trackerSnapshots.versions.has(op.payload.expectedVersion)&&!seen.has(op.payload.expectedVersion)){seen.add(op.payload.expectedVersion);op.payload.expectedVersion=trackerSnapshots.versions.get(op.payload.expectedVersion);}}
+      pendingSaveCount++;updateSaveStatusBar_();
+      await executeSecureSave_(op.payload,2,trackerAuth.epoch);
+    }catch(e){if(e.code==='AUTH_REQUIRED')break;}
+    finally{pendingSaveCount=Math.max(0,pendingSaveCount-1);updateSaveStatusBar_();}
+  }
+  if(pending.some(o=>!o.blocked))await loadData(false);
+  }finally{trackerReplayRunning_=false;updateSaveStatusBar_();}
+}
+async function apiFetch_(url,options){
+  const input=options&&options.body?JSON.parse(options.body):{action:'getData'};
+  const data=trackerReadActions.has(input.action)?await sendTrackerRequest_(input):await secureSaveWithRetry_(input);
+  return {ok:true,status:200,json:async()=>data};
+}
+function canEditRequestField_(rowIndex,field){
+  const r=allData.find(r=>r.rowIndex===rowIndex);if(!r||!currentUser)return false;
+  if(managerUnlocked||canManageTasksFor(r.bimSpecialist))return true;
+  const mine=assignees.some(a=>a.email&&a.email.toLowerCase()===currentUser.email&&a.name===r.bimSpecialist);
+  if(mine)return ['submissionDate','status','comment','category'].includes(field);
+  return (r.requesterEmail||'').toLowerCase()===currentUser.email&&!['Done','Cancelled'].includes(r.status)&&['project','priority','category','description','linksPath'].includes(field);
+}
+function canEditTeamField_(id,field){
+  const t=teamTracker.find(t=>t.id===id);if(!t||!currentUser)return false;
+  if(canManageTasksFor(t.assignee))return true;
+  const own=assignees.some(a=>a.name===t.assignee&&(a.email||'').toLowerCase()===currentUser.email);
+  return own&&(!specialistEditingRestricted()||specialistFieldEditable(field));
+}
+function downloadRecoveryReport_(){
+  const blob=new Blob([JSON.stringify(readSecureQueue_(),null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='tracker-recovery.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+let trackerRefreshTimer_=null;
+function scheduleTrackerRefresh_(){
+  clearTimeout(trackerRefreshTimer_);
+  trackerRefreshTimer_=setTimeout(()=>{if(pendingSaveCount>0){scheduleTrackerRefresh_();return;}loadData(false);},1500);
+}
+function safeTrackerLink_(value){try{const u=new URL(value);return ['https:','http:'].includes(u.protocol)?u.href:'#';}catch(e){return '#';}}
+function jsStringContent_(value){return String(value??'').split('').map(c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0')).join('');}
+</script>
+<script>const APPS_SCRIPT_URL = TRACKER_CONFIG.appsScriptUrl;
 
 // ── State ─────────────────────────────────────────────────────
 let allData=[], projects=[], assignees=[], categories=[], roles=[], historyData=[], teamTracker=[], notifications=[];
@@ -1629,6 +1923,7 @@ let sortKey="date", sortDir=-1;
 let selectedRows=new Set(), myRequestsOnly=false;
 let hiddenCols=new Set(), currentPage=1, rowsPerPage=10;
 let drawerRowIndex=null;
+let drawerRequestId=null,drawerRequestVersion=null;
 
 // ── SVG Icons ─────────────────────────────────────────────────
 const SVG={
@@ -1727,7 +2022,7 @@ async function saveStatusConfig(cfg,successMsg){
   try{
     const settings={};SETTINGS_KEYS.forEach(k=>{settings[k]=appSettings[k]!==undefined?appSettings[k]:"";});
     settings.taskStatuses=appSettings.taskStatuses;
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error||"Failed");
     setSyncState("ok"); if(successMsg)showToast(successMsg,"success");
@@ -1954,7 +2249,7 @@ async function setGroupSpecPref(name,value){
   try{
     const settings={};SETTINGS_KEYS.forEach(k=>{settings[k]=appSettings[k]!==undefined?appSettings[k]:"";});
     settings.tabConfig=appSettings.tabConfig;
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error||"Failed");
     setSyncState("ok"); showToast("Tab grouping updated for "+a.name,"success");
@@ -2004,7 +2299,7 @@ async function saveOrgConfig(cfg,successMsg){
   try{
     const settings={};SETTINGS_KEYS.forEach(k=>{settings[k]=appSettings[k]!==undefined?appSettings[k]:"";});
     settings.orgStructure=appSettings.orgStructure;
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error||"Failed");
     setSyncState("ok"); if(successMsg)showToast(successMsg,"success");
@@ -2624,6 +2919,7 @@ function deferredRerenderMyToDoView_(name){
   setTimeout(run,0);
 }
 function editTeamCell(td,taskId,field,type,options){
+  if(!canEditTeamField_(taskId,field)){showToast("You do not have permission to edit this field","error");return;}
   if(td.querySelector("input,select"))return;
   const t=teamTracker.find(x=>x.id===taskId);if(!t)return;
   const isTracker=t.category==="Tracker Tasks";
@@ -2677,10 +2973,11 @@ function editTeamCell(td,taskId,field,type,options){
         // tab's own data can go stale until the next full reload — worth a
         // background sync eventually, just delayed well past the point
         // where an immediate read-back would race the write.
-        setTimeout(()=>{ loadData(false); },4000);
+        scheduleTrackerRefresh_();
       }
     }catch(err){
-      t[field]=prevVal;
+      const latestTask=teamTracker.find(x=>x.id===taskId);
+      if(latestTask&&latestTask[field]===newVal)latestTask[field]=prevVal;
       deferredRerenderMyToDoView_(currentMyToDoName);
       setSyncState("error",null,false);
       showToast("Update failed — change reverted: "+err.message,"error");
@@ -2743,7 +3040,7 @@ function setMyToDoView(name,view){
 }
 function viewSwitcherHtml(name){
   const active=getMyToDoView(name);
-  const btn=(id,label,icon)=>`<button class="view-switch-btn${active===id?" active":""}" onclick="setMyToDoView('${name.replace(/'/g,"\\'")}','${id}')">${icon} ${label}</button>`;
+  const btn=(id,label,icon)=>`<button class="view-switch-btn${active===id?" active":""}" onclick="setMyToDoView('${jsStringContent_(name)}','${id}')">${icon} ${label}</button>`;
   return `<div class="view-switch-bar">${btn("sheet","Sheet","📄")}${btn("gantt","Gantt","📊")}${btn("table","Table","📋")}</div>`;
 }
 
@@ -2772,22 +3069,22 @@ function ttFilterBarHtml(name,tasks){
   const projects=[...new Set(tasks.map(t=>t.project).filter(Boolean))].sort();
   const allowedCats=ttCategoriesForAssignee(name);
   const catOptions=allowedCats?GANTT_CATEGORIES.filter(c=>allowedCats.includes(c)):GANTT_CATEGORIES;
-  const pill=(icon,id,val,options,allLabel)=>`<span class="tt-filter-pill"><span class="tt-filter-icon">${icon}</span><select id="${id}" onchange="applyTTFilterBar('${name.replace(/'/g,"\\'")}')">
+  const pill=(icon,id,val,options,allLabel)=>`<span class="tt-filter-pill"><span class="tt-filter-icon">${icon}</span><select id="${id}" onchange="applyTTFilterBar('${jsStringContent_(name)}')">
     <option value="">${allLabel}</option>${options.map(o=>`<option value="${esc(o)}"${val===o?" selected":""}>${esc(o)}</option>`).join("")}
   </select></span>`;
   return `<div class="tt-toolbar-section">
     ${pill("📁","ttf-category-"+slugify(name),ttFilters.category,catOptions,"All Categories")}
     ${pill("🏗","ttf-project-"+slugify(name),ttFilters.project,projects,"All Projects")}
     ${pill("🚦","ttf-status-"+slugify(name),ttFilters.status,GANTT_STATUSES,"All Statuses")}
-    <span class="tt-filter-pill"><span class="tt-filter-icon">🔍</span><input type="text" id="ttf-search-${slugify(name)}" placeholder="Search tasks…" value="${esc(ttFilters.search)}" oninput="applyTTFilterBar('${name.replace(/'/g,"\\'")}')"></span>
-    <span class="tt-filter-pill"><span class="tt-filter-icon">⇅</span><select id="ttf-sort-${slugify(name)}" onchange="applyTTSortBar('${name.replace(/'/g,"\\'")}')">
+    <span class="tt-filter-pill"><span class="tt-filter-icon">🔍</span><input type="text" id="ttf-search-${slugify(name)}" placeholder="Search tasks…" value="${esc(ttFilters.search)}" oninput="applyTTFilterBar('${jsStringContent_(name)}')"></span>
+    <span class="tt-filter-pill"><span class="tt-filter-icon">⇅</span><select id="ttf-sort-${slugify(name)}" onchange="applyTTSortBar('${jsStringContent_(name)}')">
       <option value="default"${ttSortBy==="default"?" selected":""}>Category → Project</option>
       <option value="startDate"${ttSortBy==="startDate"?" selected":""}>Start Date</option>
       <option value="endDate"${ttSortBy==="endDate"?" selected":""}>End Date</option>
       <option value="status"${ttSortBy==="status"?" selected":""}>Status</option>
       <option value="task"${ttSortBy==="task"?" selected":""}>Task Name (A–Z)</option>
     </select></span>
-    ${(ttFilters.category||ttFilters.project||ttFilters.status||ttFilters.search)?`<button class="tt-filter-clear" onclick="clearTTFilterBar('${name.replace(/'/g,"\\'")}')">✕ Clear filters</button>`:""}
+    ${(ttFilters.category||ttFilters.project||ttFilters.status||ttFilters.search)?`<button class="tt-filter-clear" onclick="clearTTFilterBar('${jsStringContent_(name)}')">✕ Clear filters</button>`:""}
   </div>`;
 }
 function applyTTFilterBar(name){
@@ -2864,7 +3161,7 @@ function renderMyToDo(name){
       <button class="btn btn-ghost btn-sm"${managerUnlocked?"":' style="margin-left:auto;"'} onclick="exportTeamTasksExcel()" title="Export the whole Team Tracker to Excel — one tab per category">⬇ Export</button>
       <button class="btn btn-ghost btn-sm" onclick="triggerImportTeamTasks()" title="Re-import an edited Team Tracker Excel file">⬆ Import</button>
       <div class="tt-add-dropdown" id="ttAddDropdown-${slug}">
-        <button class="btn btn-ghost btn-sm" onclick="toggleTTAddMenu('${slug}','${name.replace(/'/g,"\\'")}',event)">+ Add ▾</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleTTAddMenu('${slug}','${jsStringContent_(name)}',event)">+ Add ▾</button>
       </div></div>
     <div id="mytodo-view-${slug}"></div>`;
 
@@ -3016,7 +3313,7 @@ function buildGroupedTaskRows(tasks,slug,viewKey,rightCellFn,rightEmptyCellHtml)
         leftRows.push(`<tr class="${overdue?"gantt-overdue":""}${selected?" gantt-row-selected":""}${isMilestone?" tt-milestone-row":""}${rowHighlight?" tt-highlight-row":""}" ${rowAttrs}${borderAttr}>
           ${!catCellWritten?catCellHtml:""}
           ${i===0?`<td class="gantt-cat-cell gantt-merge-cell ttcol-proj" data-group-key="proj:${projKey}" rowspan="${projTasks.length}" onclick="toggleTTGroup('proj','${projKey}')">${projLabel}</td>`:""}
-          <td${ec("gantt-task-cell ttcol-task","task","text")}>${isMilestone?"◆ ":""}${esc(t.task)}${t.requestNo?` <span class="gantt-source-tag">#${esc(t.requestNo)}</span><button class="tt-jump-link" title="Open Request #${esc(t.requestNo)} in Requests tab" onclick="event.stopPropagation();goToRequestInTab('${esc(t.requestNo)}')">↗</button>`:""}</td>
+          <td${ec("gantt-task-cell ttcol-task","task","text")}>${isMilestone?"◆ ":""}${esc(t.task)}${t.requestNo?` <span class="gantt-source-tag">#${esc(t.requestNo)}</span><button class="tt-jump-link" title="Open Request #${esc(t.requestNo)} in Requests tab" onclick="event.stopPropagation();goToRequestInTab('${jsStringContent_(t.requestNo)}')">↗</button>`:""}</td>
           <td${isMilestone?' class="ttcol-start"':ec("ttcol-start","startDate","date")}>${isMilestone?"—":(esc(t.startDate)||"—")}</td>
           <td${ec("ttcol-end","endDate","date")}>${esc(t.endDate)||"—"}</td>
           <td${isMilestone?' class="ttcol-status"':ec("ttcol-status","status","select",GANTT_STATUSES)}>${ganttStatusChip(t.status,overdue)}</td>
@@ -3521,7 +3818,7 @@ function renderMyToDoTableView(name,slug,tasks){
     return (av<bv?-1:av>bv?1:0)*dir;
   });
   const arrow=f=>field===f?(dir===1?" ▲":" ▼"):"";
-  const th=(f,label)=>`<th class="ttsort-th" onclick="setTTTableSort('${name.replace(/'/g,"\\'")}','${f}')">${label}${arrow(f)}</th>`;
+  const th=(f,label)=>`<th class="ttsort-th" onclick="setTTTableSort('${jsStringContent_(name)}','${f}')">${label}${arrow(f)}</th>`;
 
   let rows="";
   if(!sorted.length){
@@ -3535,7 +3832,7 @@ function renderMyToDoTableView(name,slug,tasks){
       const collapsed=collapsedTTGroups.has("proj:"+projKey);
       const gIdx=groupSeq++;
       rows+=`<tr class="gantt-group-row"${groupBorderStyleAttr(projKey,true,gIdx)}>
-        <td colspan="8" class="gantt-cat-cell gantt-merge-cell" data-group-key="proj:${projKey}" onclick="toggleTTGroup('proj','${projKey}');renderMyToDo('${name.replace(/'/g,"\\'")}')">
+        <td colspan="8" class="gantt-cat-cell gantt-merge-cell" data-group-key="proj:${projKey}" onclick="toggleTTGroup('proj','${projKey}');renderMyToDo('${jsStringContent_(name)}')">
           <span class="gantt-group-toggle">${collapsed?"▶":"▼"}</span> 📁 ${groupLabelAccentHtml(projKey,esc(proj))} <span class="gantt-project-count">(${projTasks.length})</span>
         </td>
       </tr>`;
@@ -3551,7 +3848,7 @@ function renderMyToDoTableView(name,slug,tasks){
           };
           rows+=`<tr class="${overdue?"gantt-overdue":""}${isMilestone?" tt-milestone-row":""}${rowHighlight?" tt-highlight-row":""}"${groupBorderStyleAttr(projKey,false,gIdx)}>
             <td>${esc(t.category)}</td>
-            <td class="gantt-task-cell"${ec("task","text")}>${isMilestone?"◆ ":""}${esc(t.task)}${t.requestNo?` <span class="gantt-source-tag">#${esc(t.requestNo)}</span><button class="tt-jump-link" title="Open Request #${esc(t.requestNo)} in Requests tab" onclick="event.stopPropagation();goToRequestInTab('${esc(t.requestNo)}')">↗</button>`:""}</td>
+            <td class="gantt-task-cell"${ec("task","text")}>${isMilestone?"◆ ":""}${esc(t.task)}${t.requestNo?` <span class="gantt-source-tag">#${esc(t.requestNo)}</span><button class="tt-jump-link" title="Open Request #${esc(t.requestNo)} in Requests tab" onclick="event.stopPropagation();goToRequestInTab('${jsStringContent_(t.requestNo)}')">↗</button>`:""}</td>
             <td${isMilestone?"":ec("startDate","date")}>${isMilestone?"—":(esc(t.startDate)||"—")}</td>
             <td${ec("endDate","date")}>${esc(t.endDate)||"—"}</td>
             <td${isMilestone?"":ec("status","select",GANTT_STATUSES)}>${ganttStatusChip(t.status,overdue)}</td>
@@ -3587,7 +3884,7 @@ function renderOverdueTab(name){
       const gid=slugify("overdue-"+proj+"-"+slug);
       const collapsed=collapsedProjectGroups.has(gid);
       html+=`<div class="gantt-project-group">
-        <div class="gantt-project-header" onclick="toggleProjectGroup('${gid}');renderOverdueTab('${name.replace(/'/g,"\\'")}')">
+        <div class="gantt-project-header" onclick="toggleProjectGroup('${gid}');renderOverdueTab('${jsStringContent_(name)}')">
           <span class="gantt-project-toggle">${collapsed?"▶":"▼"}</span> 📁 ${esc(proj)} <span class="gantt-project-count">(${byProj[proj].length})</span>
         </div>
         <div class="gantt-project-body" style="${collapsed?"display:none;":""}">
@@ -3645,7 +3942,7 @@ async function updateWorkloadCapacity(val){
   try{
     const settings={};SETTINGS_KEYS.forEach(k=>{settings[k]=appSettings[k]!==undefined?appSettings[k]:"";});
     settings.ttWorkloadCapacity=String(capacity);
-    await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
+    await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
   }catch(err){showToast("Could not save capacity: "+err.message,"error");}
 }
 
@@ -3686,7 +3983,7 @@ function renderWorkload(){
       const maxDay=Math.max(0,...dates.map((d)=>tasks.filter(t=>{const s=parseDMY(t.startDate),e=parseDMY(t.endDate);return s&&e&&d>=s&&d<=e;}).length));
       const isExpanded=expandedWorkloadAssignees.has(a.name);
       leftRows+=`<tr>
-        <td class="workload-name-cell" onclick="toggleWorkloadExpand('${a.name.replace(/'/g,"\\'")}')">
+        <td class="workload-name-cell" onclick="toggleWorkloadExpand('${jsStringContent_(a.name)}')">
           <span class="gantt-group-toggle">${isExpanded?"▼":"▶"}</span> ${esc(a.name)}${maxDay>capacity?` <span class="workload-overload-badge">⚠ overloaded</span>`:""}
         </td>
       </tr>`;
@@ -3888,7 +4185,7 @@ function renderAssigneeSettings(name){
       <div class="settings-info" style="margin-top:6px;">Unchecked types won't be emailed to you personally. If the manager has turned a type off for the whole team (Manage → Settings), it stays off regardless of what's checked here.</div>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
-      <button class="btn btn-primary" onclick="saveAssigneePrefs('${slug}','${name.replace(/'/g,"\\'")}')">Save My Settings</button>
+      <button class="btn btn-primary" onclick="saveAssigneePrefs('${slug}','${jsStringContent_(name)}')">Save My Settings</button>
     </div>`;
 }
 // Reorders/hides are staged directly on the in-memory assignee record (a
@@ -3936,7 +4233,7 @@ async function saveAssigneePrefs(slug,name){
   const prefHiddenWidgets=a.prefHiddenWidgets||"";
   const prefEmailOptOuts=(a.prefEmailOptOuts||[]).join(",");
   try{
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"updateAssigneePrefs",email:a.email,prefView,prefRangeBack,prefRangeForward,prefTheme,prefTabOrder,prefHiddenTabs,prefHiddenWidgets,prefEmailOptOuts,prefDefaultCategory,prefDefaultStatus})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"updateAssigneePrefs",email:a.email,prefView,prefRangeBack,prefRangeForward,prefTheme,prefTabOrder,prefHiddenTabs,prefHiddenWidgets,prefEmailOptOuts,prefDefaultCategory,prefDefaultStatus})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error||"Failed");
     showToast("Settings saved","success");
@@ -4243,7 +4540,8 @@ async function submitAddTaskModal(){
     // Reconcile the temporary row with the real saved row (real id, any
     // server-side defaults) in the background — doesn't block the UI, which
     // is already showing the task.
-    loadData(false);
+    if(json.task){Object.assign(optimisticTask,json.task);if(currentMyToDoName)deferredRerenderMyToDoView_(currentMyToDoName);}
+    else scheduleTrackerRefresh_();
   }catch(err){
     // Roll back the optimistic row if the save actually failed.
     const idx=teamTracker.findIndex(t=>t.id===tempId);
@@ -4339,7 +4637,7 @@ async function handleImportTeamTasksFile(input){
     });
     if(!tasks.length){showToast("No tasks found in that file — nothing to import","error");return;}
     setSyncState("syncing","Importing "+tasks.length+" task(s)…");
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"importTeamTasks",tasks})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"importTeamTasks",tasks})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error||"Import failed");
     setSyncState("ok");
@@ -4613,42 +4911,13 @@ document.addEventListener("click",e=>{
 // ════════════════════════════════════════════════════════════
 // GOOGLE AUTH
 // ════════════════════════════════════════════════════════════
-function initGoogleAuth(){
-  if(!googleClientId){hideLoginScreen();return;}
-  google.accounts.id.initialize({client_id:googleClientId,callback:onGoogleSignIn,auto_select:true,cancel_on_tap_outside:false});
-  google.accounts.id.renderButton(document.getElementById("googleSignInBtn"),{theme:"outline",size:"large",text:"signin_with",shape:"rectangular",width:240});
-  const remembered=getRememberedUser();
-  if(remembered){
-    currentUser=remembered;
-    hideLoginScreen(); updateNavUser(); loadProfile(); updateManagerTabVisibility();
-    return;
-  }
-  google.accounts.id.prompt(n=>{if(n.isNotDisplayed()||n.isSkippedMoment())document.getElementById("loginScreen").classList.add("show");});
-}
-function getRememberedUser(){
-  try{
-    const raw=localStorage.getItem("ata-user");
-    if(!raw)return null;
-    return JSON.parse(raw);
-  }catch(e){return null;}
-}
-function onGoogleSignIn(r){
-  const p=JSON.parse(atob(r.credential.split(".")[1]));
-  currentUser={name:p.name,email:p.email,picture:p.picture||null};
-  localStorage.setItem("ata-user",JSON.stringify(currentUser));
-  hideLoginScreen(); updateNavUser(); loadProfile(); updateManagerTabVisibility();
-}
+function initGoogleAuth(){ initializeSecureGoogleAuth_(); }
+function getRememberedUser(){ return null; }
+async function onGoogleSignIn(r){ await acceptGoogleSignIn_(r); }
 function hideLoginScreen(){document.getElementById("loginScreen").classList.remove("show");}
 function promptSignIn(){if(googleClientId)google.accounts.id.prompt();}
-function browseWithoutLogin(){hideLoginScreen(); document.getElementById("navSignInBtn").style.display="flex";}
-function signOut(){
-  if(googleClientId)google.accounts.id.disableAutoSelect();
-  localStorage.removeItem("ata-user");
-  currentUser=null; managerUnlocked=false;
-  updateNavUser(); updateManagerTabVisibility();
-  if(document.getElementById("tab-requests"))switchTab("requests");
-  document.getElementById("loginScreen").classList.add("show");
-}
+function browseWithoutLogin(){ promptSignIn(); }
+function signOut(){ secureSignOut_(); }
 function updateManagerTabVisibility(){
   const isManager=!!(currentUser&&currentUser.email&&managerEmails.length&&managerEmails.includes(currentUser.email.toLowerCase()));
   if(isManager)grantManagerAccess(); else revokeManagerAccess();
@@ -4744,7 +5013,7 @@ async function markAllNotificationsRead(){
   myNotifications().forEach(n=>n.read=true);
   renderNotifPanel();
   try{
-    await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"markNotificationRead",all:true,email:currentUser.email})});
+    await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"markNotificationRead",all:true,email:currentUser.email})});
   }catch(err){/* local state already updated; will reconcile on next reload */}
 }
 async function openNotification(id){
@@ -4753,7 +5022,7 @@ async function openNotification(id){
   if(!n.read){
     n.read=true; renderNotifPanel();
     try{
-      await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"markNotificationRead",id:n.id})});
+      await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"markNotificationRead",id:n.id})});
     }catch(err){/* non-fatal */}
   }
   document.getElementById("notifPanel").classList.remove("open");
@@ -5140,15 +5409,10 @@ window.addEventListener("resize",()=>requestAnimationFrame(fitRequestsTableToWid
 // still asks the server for current data; this only changes what the user
 // sees WHILE that fetch is in flight. ──
 const LOCAL_DATA_CACHE_KEY = "ata-bim-local-cache-v1";
-function readLocalDataCache_(){
-  try{ const raw=localStorage.getItem(LOCAL_DATA_CACHE_KEY); return raw?JSON.parse(raw):null; }
-  catch(e){ return null; }
-}
-function writeLocalDataCache_(json){
-  try{ localStorage.setItem(LOCAL_DATA_CACHE_KEY, JSON.stringify({savedAt:Date.now(), payload:json})); }
-  catch(e){ /* storage full/unavailable — safe to skip, this is only an optimization */ }
-}
+function readLocalDataCache_(){ return null; }
+function writeLocalDataCache_(json){}
 function applyLoadedData_(json){
+  currentUser=json.user||currentUser; updateNavUser();
   allData=json.data||[]; projects=json.projects||[]; assignees=json.assignees||[];
   categories=json.categories||[]; roles=json.roles||[]; historyData=json.history||[]; teamTracker=json.teamTracker||[];
   myTodoCategories=json.myTodoCategories&&json.myTodoCategories.length?json.myTodoCategories:GANTT_CATEGORIES;
@@ -5196,25 +5460,10 @@ function refreshActiveTabContent_(){
   // "requests" tab itself is already re-rendered unconditionally above (renderTable()).
 }
 let googleAuthInitStarted_=false;
-function tryInitGoogleAuth_(){
-  if(googleAuthInitStarted_)return; googleAuthInitStarted_=true;
-  if(typeof google!=="undefined"&&google.accounts){ initGoogleAuth(); return; }
-  // The Google Identity script loads asynchronously and can still be in
-  // flight even after the rest of the page is ready — a window "load"
-  // listener is NOT safe here, because if that event already fired before
-  // this point (very possible now that cached data can render almost
-  // instantly) the listener simply never runs, and the remembered-login
-  // check silently never happens — which is what was hiding every
-  // assignee tab (they're gated on knowing who's signed in). Poll briefly
-  // instead, so it works regardless of exactly when the script finishes.
-  let tries=0;
-  const poll=setInterval(()=>{
-    tries++;
-    if(typeof google!=="undefined"&&google.accounts){ clearInterval(poll); initGoogleAuth(); }
-    else if(tries>=100){ clearInterval(poll); hideLoginScreen(); } // ~10s — give up gracefully rather than hang forever
-  },100);
-}
+function tryInitGoogleAuth_(){ initializeSecureGoogleAuth_(); }
 async function loadData(blocking){
+  if(!trackerAuth.token){ await bootstrapTracker_(); return; }
+  if(pendingSaveCount>0){scheduleTrackerRefresh_();return;}
   // blocking defaults to true (a manual/explicit reload can show the full
   // overlay), but background refreshes — e.g. after submitting a new
   // request, where a confirmation modal is already open — pass false so
@@ -5242,7 +5491,7 @@ async function loadData(blocking){
     loadReassureTimers.push(setTimeout(()=>{loadStatusEl.textContent="Almost there, thanks for your patience…";},10000));
   }
   try{
-    const res=await fetch(APPS_SCRIPT_URL);
+    const res=await apiFetch_(APPS_SCRIPT_URL);
     const json=await res.json();
     if(!json.success)throw new Error(json.error);
     applyLoadedData_(json);
@@ -5252,6 +5501,7 @@ async function loadData(blocking){
     loadReassureTimers.forEach(clearTimeout);
     hideLoadScreen();
   }catch(err){
+    if(err.code==="STALE_READ"){loadReassureTimers.forEach(clearTimeout);scheduleTrackerRefresh_();return;}
     loadReassureTimers.forEach(clearTimeout);
     if(usedCache){
       // Cached data is already rendered underneath — don't show the hard
@@ -5261,8 +5511,8 @@ async function loadData(blocking){
       showToast("Could not refresh — showing last saved data","error");
       return;
     }
-    setSyncState("error",null,blocking); hideLoginScreen(); hideLoadScreen();
-    document.getElementById("tableBody").innerHTML=`<tr class="state-row"><td colspan="14"><div class="empty-notice"><strong>Could not connect</strong><span>${err.message}</span></div></td></tr>`;
+    setSyncState("error",null,blocking); hideLoadScreen();
+    document.getElementById("tableBody").innerHTML=`<tr class="state-row"><td colspan="14"><div class="empty-notice"><strong>Could not connect</strong><span>${esc(err.message)}</span></div></td></tr>`;
     showToast("Connection failed","error");
   }
 }
@@ -5467,6 +5717,8 @@ function renderTable(){
     if(sortKey==="requestNo"){av=parseInt(av)||0;bv=parseInt(bv)||0;}
     return av<bv?-sortDir:av>bv?sortDir:0;
   });
+  const recent=allData.filter(r=>recentRequestRows_.has(r.rowIndex));
+  if(!jumpToRequestNo&&recent.length)rows=recent.slice().reverse().concat(rows.filter(r=>!recentRequestRows_.has(r.rowIndex)));
   const total=rows.length;
   const rpp=rowsPerPage||parseInt(document.getElementById("filterRowsPerPage").value)||10;
   const totalPages=rpp===0?1:Math.max(1,Math.ceil(total/rpp));
@@ -5485,7 +5737,7 @@ function renderTable(){
   tbody.innerHTML=pageRows.map(r=>{
     const overdue=isOverdue(r);
     const colHide=col=>hiddenCols.has(col)?'style="display:none"':'';
-    const linkHtml=r.linksPath?`<a href="${r.linksPath.startsWith("http")?r.linksPath:"#"}" class="link-icon" target="_blank">🔗</a>`:`<span style="color:#ccc">—</span>`;
+    const linkHtml=r.linksPath?`<a href="${esc(safeTrackerLink_(r.linksPath))}" class="link-icon" target="_blank">🔗</a>`:`<span style="color:#ccc">—</span>`;
     const showOverdueBadge=appSettings.showOverdue!==false&&appSettings.showOverdue!=="false";
     const subDateHtml=(overdue&&showOverdueBadge)?`<span class="chip chip-overdue">${SVG.clock}<span>${esc(r.submissionDate)} OVERDUE</span></span>`:(r.submissionDate?`<span class="date-cell">${esc(r.submissionDate)}</span>`:`<span style="color:#ccc;font-size:11px;">Not set</span>`);
     return`<tr class="${priorityClass(r.priority)} ${overdue?"overdue-row":""} ${appSettings.compactRows?"compact":""} ${selectedRows.has(r.rowIndex)?"row-selected":""}" data-row="${r.rowIndex}">
@@ -5502,7 +5754,7 @@ function renderTable(){
       <td class="col-hl editable-cell" onclick="editCell(this,${r.rowIndex},'bimSpecialist','select',assignees.map(a=>a.name),true)" ${colHide('specialist')}>${esc(r.bimSpecialist||"— Unassigned")}</td>
       <td class="col-hl editable-cell" onclick="editCell(this,${r.rowIndex},'status','select',STATUSES,false,false,true)">${statusChip(r.status)}</td>
       <td class="col-hl description-cell editable-cell" title="${esc(r.comment)}" onclick="editCell(this,${r.rowIndex},'comment','textarea')" ${colHide('comment')}>${esc(r.comment)||"—"}</td>
-      <td><div style="display:flex;gap:4px;"><button class="expand-btn" onclick="openDrawer(${r.rowIndex})" title="Details">${SVG.expand}</button><button class="del-row-btn" onclick="confirmDeleteRow(${r.rowIndex},'${esc(r.requestNo)}')" title="Delete">${SVG.trash}</button></div></td>
+      <td><div style="display:flex;gap:4px;"><button class="expand-btn" onclick="openDrawer(${r.rowIndex})" title="Details">${SVG.expand}</button><button class="del-row-btn" onclick="confirmDeleteRow(${r.rowIndex},'${jsStringContent_(r.requestNo)}')" title="Delete">${SVG.trash}</button></div></td>
     </tr>`;
   }).join("");
 
@@ -5749,9 +6001,9 @@ function updateSaveStatusBar_(){
   if(pendingSaveCount>0){
     bar.classList.remove("save-status-done");
     bar.classList.add("show");
-    if(textEl)textEl.textContent=pendingSaveCount>1?`Saving ${pendingSaveCount} changes…`:"Saving changes…";
+    if(textEl)textEl.textContent=trackerReplayRunning_?"Syncing pending changes…":"Saving…";
   }else if(bar.classList.contains("show")){
-    // Only flash "All changes saved" if the bar was actually showing —
+    // Only flash "Saved" if the bar was actually showing —
     // otherwise every page load would briefly flicker it for no reason.
     if(textEl)textEl.textContent="All changes saved";
     bar.classList.add("save-status-done");
@@ -5764,12 +6016,8 @@ function recoveryStore_(){ return (appSettings.recoveryStorage==="session")?sess
 function maxRetryAttempts_(){ const n=parseInt(appSettings.maxRetryAttempts,10); return (n>=1&&n<=5)?n:3; }
 function warnBeforeUnload_(){ return appSettings.warnBeforeUnload===undefined||appSettings.warnBeforeUnload===true||appSettings.warnBeforeUnload==="true"; }
 
-function readOpQueue_(){
-  try{ const raw=recoveryStore_().getItem(RECOVERY_QUEUE_KEY); return raw?JSON.parse(raw):[]; }catch(e){ return []; }
-}
-function writeOpQueue_(queue){
-  try{ recoveryStore_().setItem(RECOVERY_QUEUE_KEY,JSON.stringify(queue)); }catch(e){ /* storage full/unavailable — recovery just won't have anything to replay */ }
-}
+function readOpQueue_(){ return readSecureQueue_(); }
+function writeOpQueue_(queue){ writeSecureQueue_(queue); }
 // Best-effort identity for "what record does this op touch" — used purely
 // to detect when a newer queued op supersedes an older one for the exact
 // same row/task, never to decide whether to send the op at all.
@@ -5780,19 +6028,7 @@ function opTargetKey_(payload){
     : null;
   return idPart ? (payload.action+"|"+idPart) : null; // null = no stable target (e.g. an "add") — never dedupe those
 }
-function queueOp_(op){
-  let q=readOpQueue_().filter(o=>o.id!==op.id); // upsert — safe to call again during replay
-  // A stuck op that never got its own confirmation (most commonly one that
-  // only ever went out via sendBeacon on a previous pagehide, which can't
-  // return a response to clear it) must never be allowed to replay on some
-  // later page load and stomp a newer edit to the same row with its own
-  // older value. Whenever we queue a fresh op, drop any other still-queued
-  // op aimed at the exact same record — it's superseded, full stop.
-  const key = opTargetKey_(op.payload);
-  if(key) q=q.filter(o=>opTargetKey_(o.payload)!==key);
-  q.push(op);
-  writeOpQueue_(q);
-}
+function queueOp_(op){ const q=readOpQueue_().filter(x=>x.id!==op.id); q.push(op); writeOpQueue_(q); }
 function removeOpFromQueue_(id){
   writeOpQueue_(readOpQueue_().filter(o=>o.id!==id));
 }
@@ -5807,42 +6043,9 @@ window.addEventListener("beforeunload",function(e){
 // something is still queued, try to get it out the door via sendBeacon.
 // This can't confirm success — that's what the queue-replay on next load,
 // and the backend's clientOpId dedupe, are for.
-window.addEventListener("pagehide",function(){
-  const method=recoveryMethod_();
-  if(method!=="beacon"&&method!=="both")return;
-  readOpQueue_().forEach(op=>{
-    try{ navigator.sendBeacon(APPS_SCRIPT_URL,new Blob([JSON.stringify(op.payload)],{type:"text/plain"})); }catch(e){}
-  });
-});
+// Recovery is persisted per verified account. No unconfirmed page-close sends.
 
-async function fetchWithRetry(payload,attemptsOverride){
-  const attempts=attemptsOverride||maxRetryAttempts_();
-  const method=recoveryMethod_();
-  const useQueue=method==="queue"||method==="both";
-  const opId=payload.clientOpId||genOpId_();
-  payload.clientOpId=opId;
-  if(useQueue)queueOp_({id:opId,payload,ts:Date.now()});
-  let lastErr;
-  for(let i=0;i<attempts;i++){
-    pendingSaveCount++; updateSaveStatusBar_();
-    if(i>0)setSyncState("syncing",`Retrying (${i+1}/${attempts})…`,false);
-    try{
-      const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(payload)});
-      const json=await res.json();
-      if(!json.success)throw new Error(json.error);
-      if(useQueue)removeOpFromQueue_(opId);
-      return json;
-    }catch(err){
-      lastErr=err;
-      if(i<attempts-1)await new Promise(r=>setTimeout(r,1000*Math.pow(2,i))); // 1s, 2s backoff
-    }finally{
-      pendingSaveCount=Math.max(0,pendingSaveCount-1); updateSaveStatusBar_();
-    }
-  }
-  // All attempts failed — if queuing is on, the op stays queued so it's
-  // retried automatically the next time this page loads (replayPendingOps_).
-  throw lastErr;
-}
+async function fetchWithRetry(payload,attemptsOverride){ return secureSaveWithRetry_(payload,attemptsOverride); }
 
 // Runs at startup: resends anything left over from a save that never got
 // to finish (e.g. the page was closed or reloaded mid-save last time).
@@ -5854,24 +6057,7 @@ async function fetchWithRetry(payload,attemptsOverride){
 // anyway risks silently overwriting a newer value with this stale one — far
 // worse than the edit just staying lost. Drop it and say so instead.
 const OP_MAX_REPLAY_AGE_MS = 6*60*60*1000;
-async function replayPendingOps_(){
-  if(recoveryMethod_()==="off")return;
-  const queue=readOpQueue_();
-  if(!queue.length)return;
-  const now=Date.now();
-  const fresh=queue.filter(op=>(now-(op.ts||0))<OP_MAX_REPLAY_AGE_MS);
-  const stale=queue.filter(op=>(now-(op.ts||0))>=OP_MAX_REPLAY_AGE_MS);
-  if(stale.length){
-    writeOpQueue_(fresh);
-    showToast(`${stale.length} old unconfirmed change${stale.length>1?"s":""} from a previous session ${stale.length>1?"were":"was"} too old to safely reapply and ${stale.length>1?"were":"was"} discarded — please double-check those edits.`,"error");
-  }
-  if(!fresh.length)return;
-  showToast(`Recovering ${fresh.length} unsaved change${fresh.length>1?"s":""}…`,"success");
-  for(const op of fresh){
-    try{ await fetchWithRetry(op.payload); }
-    catch(e){ /* still failing — stays queued, we'll try again next load */ }
-  }
-}
+async function replayPendingOps_(){ return replaySecureQueue_(); }
 
 // Same fix as deferredRerenderMyToDoView_ above, for the Requests tab's
 // table — editCell() has the identical "click straight into the next cell"
@@ -5885,6 +6071,7 @@ function deferredRenderTable_(){
   setTimeout(run,0);
 }
 function editCell(td,rowIndex,field,type,options,isAssignee,isProject,isStatus){
+  if(!canEditRequestField_(rowIndex,field)){showToast("You do not have permission to edit this field","error");return;}
   if(td.querySelector("input,select,textarea"))return;
   const row=allData.find(r=>r.rowIndex===rowIndex)||{};
   const currentVal=row[field]||"",originalHTML=td.innerHTML;
@@ -5912,17 +6099,17 @@ function editCell(td,rowIndex,field,type,options,isAssignee,isProject,isStatus){
     row[field]=newVal;
     if(completionReply)row.comment=row.comment?row.comment+"\n"+completionReply:completionReply;
     let optimisticSpecialist=null;
-    if(isProject){const proj=projects.find(p=>p.name===newVal);if(proj&&proj.defaultSpecialist&&proj.defaultSpecialist!==prevRowSnapshot.bimSpecialist){optimisticSpecialist=proj.defaultSpecialist;row.bimSpecialist=proj.defaultSpecialist;}}
+    if(isProject&&managerUnlocked){const proj=projects.find(p=>p.name===newVal);if(proj&&proj.defaultSpecialist&&proj.defaultSpecialist!==prevRowSnapshot.bimSpecialist){optimisticSpecialist=proj.defaultSpecialist;row.bimSpecialist=proj.defaultSpecialist;}}
     deferredRenderTable_();
     setSyncState("syncing",null,false);
     try{
-      const payload={action:"update",rowIndex};payload[field]=newVal;
+      const payload={action:"update",requestId:row.requestId,expectedVersion:prevRowSnapshot.version};payload[field]=newVal;
       if(isAssignee)payload.notifyAssignee=true;
       if(isStatus)payload.notifyRequester=true;
       if(field==="submissionDate")payload.notifySubmissionDate=true;
       if(completionReply){payload.completionReply=completionReply;payload.comment=row.comment;}
       const json=await fetchWithRetry(payload);
-      if(optimisticSpecialist)fetchWithRetry({action:"update",rowIndex,bimSpecialist:optimisticSpecialist}).catch(()=>{});
+      if(optimisticSpecialist)fetchWithRetry({action:"update",requestId:row.requestId,bimSpecialist:optimisticSpecialist}).catch(()=>{});
       setSyncState("ok",null,false);
       let msg="Saved";if(isAssignee&&newVal)msg=`Assigned to ${newVal} — notifying by email`;if(isStatus)msg=`Status → ${newVal}`;if(field==="submissionDate"&&newVal)msg="Submission date set — notifying requester";
       if(completionReply)msg="Marked Done — notifying requester";
@@ -5958,6 +6145,8 @@ function editCell(td,rowIndex,field,type,options,isAssignee,isProject,isStatus){
 function openDrawer(rowIndex){
   const r=allData.find(x=>x.rowIndex===rowIndex);if(!r)return;
   drawerRowIndex=rowIndex;
+  const selectedRequest=allData.find(r=>r.rowIndex===rowIndex);
+  drawerRequestId=selectedRequest&&selectedRequest.requestId;drawerRequestVersion=selectedRequest&&selectedRequest.version;
   document.getElementById("drawerTitle").textContent=`Request #${r.requestNo}`;
   const rHistory=historyData.filter(h=>h.requestNo===r.requestNo).slice(-10).reverse();
   document.getElementById("drawerBody").innerHTML=`
@@ -5965,7 +6154,7 @@ function openDrawer(rowIndex){
     <div class="drawer-grid">
       <div class="drawer-field"><label>Requested By</label><input id="dr-requestBy" value="${esc(r.requestBy)}"></div>
       <div class="drawer-field"><label>Date</label><input id="dr-date" value="${esc(r.date)}"></div>
-      <div class="drawer-field"><label>Project</label><select id="dr-project" onchange="drawerProjectChange()">${projects.map(p=>`<option value="${esc(p.name)}" ${p.name===r.project?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
+      <div class="drawer-field"><label>Project</label><select id="dr-project" onchange="drawerProjectChange()"><option value="">— Select —</option>${r.project&&!projects.some(p=>p.name===r.project)?`<option value="${esc(r.project)}" selected>${esc(r.project)}</option>`:""}${projects.map(p=>`<option value="${esc(p.name)}" ${p.name===r.project?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
       <div class="drawer-field"><label>Priority</label><select id="dr-priority">${PRIORITIES.map(p=>`<option ${p===r.priority?"selected":""}>${p}</option>`).join("")}</select></div>
       <div class="drawer-field"><label>Category</label><select id="dr-category"><option value="">— Select —</option>${categories.map(c=>`<option ${c.name===r.category?"selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
       <div class="drawer-field"><label>Status</label><select id="dr-status">${STATUSES.map(s=>`<option ${s===r.status?"selected":""}>${s}</option>`).join("")}</select></div>
@@ -5981,15 +6170,17 @@ function openDrawer(rowIndex){
     ${rHistory.length?`<div><div class="drawer-section-title">Change History</div><div style="display:flex;flex-direction:column;gap:6px;">${rHistory.map(h=>`<div class="drawer-history-item"><div class="dhi-dot"></div><div class="dhi-content"><div class="dhi-action">${esc(h.action)}</div><div class="dhi-meta">${esc(h.timestamp)}</div></div></div>`).join("")}</div></div>`:``}`;
   document.getElementById("drawerOverlay").classList.add("open");
   document.getElementById("drawer").classList.add("open");
+  for(const field of ["requestBy","date","project","priority","category","status","description","linksPath","comment","bimSpecialist","submissionDate"]){const el=document.getElementById("dr-"+field);if(el)el.disabled=!canEditRequestField_(rowIndex,field);}
 }
 function drawerProjectChange(){
+  if(!managerUnlocked)return;
   const proj=projects.find(p=>p.name===document.getElementById("dr-project").value);
   if(proj&&proj.defaultSpecialist){const s=document.getElementById("dr-bimSpecialist");if(s)s.value=proj.defaultSpecialist;}
 }
 function closeDrawer(){document.getElementById("drawerOverlay").classList.remove("open");document.getElementById("drawer").classList.remove("open");drawerRowIndex=null;}
 async function saveDrawer(){
   if(!drawerRowIndex)return;
-  const row=allData.find(r=>r.rowIndex===drawerRowIndex)||{};
+  const row=allData.find(r=>r.requestId===drawerRequestId)||{};
   const g=id=>{const el=document.getElementById(id);return el?el.value.trim():"";};
   const fields={requestBy:g("dr-requestBy"),date:g("dr-date"),project:g("dr-project"),priority:g("dr-priority"),category:g("dr-category"),status:g("dr-status"),description:g("dr-description"),linksPath:g("dr-linksPath"),bimSpecialist:g("dr-bimSpecialist"),submissionDate:g("dr-submissionDate"),comment:g("dr-comment")};
   let completionReply="";
@@ -5997,7 +6188,7 @@ async function saveDrawer(){
     completionReply=await openCompletionReplyModal();
     if(completionReply)fields.comment=fields.comment?fields.comment+"\n"+completionReply:completionReply;
   }
-  const payload={action:"update",rowIndex:drawerRowIndex,...fields};
+  const payload={action:"update",requestId:drawerRequestId,expectedVersion:drawerRequestVersion,...fields};
   if(completionReply)payload.completionReply=completionReply;
   if(fields.bimSpecialist&&fields.bimSpecialist!==row.bimSpecialist)payload.notifyAssignee=true;
   if(fields.status&&fields.status!==row.status)payload.notifyRequester=true;
@@ -6025,8 +6216,12 @@ async function saveDrawer(){
 // DELETE
 // ════════════════════════════════════════════════════════════
 let pendingDeleteRowIndex=null;
+let pendingDeleteRequestId=null, pendingDeleteVersion=null;
 let pendingDeleteReqNo=null;
 function confirmDeleteRow(rowIndex,reqNo){
+  if(!managerUnlocked){showToast("Only managers can delete requests","error");return;}
+  const record=allData.find(r=>r.rowIndex===rowIndex);if(!record)return;
+  pendingDeleteRequestId=record.requestId;pendingDeleteVersion=record.version;
   pendingDeleteRowIndex=rowIndex;
   pendingDeleteReqNo=reqNo;
   document.getElementById("confirmMsg").textContent=`Are you sure you want to permanently delete Request #${reqNo}? This cannot be undone.`;
@@ -6035,11 +6230,15 @@ function confirmDeleteRow(rowIndex,reqNo){
 }
 function closeConfirm(){document.getElementById("confirmOverlay").classList.remove("open");pendingDeleteRowIndex=null;pendingDeleteReqNo=null;}
 async function executeDeleteRow(){
-  const rowIndex=pendingDeleteRowIndex, reqNo=pendingDeleteReqNo;
+  const rowIndex=pendingDeleteRowIndex, reqNo=pendingDeleteReqNo, requestId=pendingDeleteRequestId, expectedVersion=pendingDeleteVersion;
   closeConfirm();if(!rowIndex)return;setSyncState("syncing",null,false);
+  const deletedRecord=allData.find(r=>r.requestId===requestId);
+  allData=allData.filter(r=>r.requestId!==requestId);
+  if(drawerRequestId===requestId)document.getElementById("drawer").classList.remove("open");
+  renderTable();updateStats();showToast("Request removed from the table. Saving deletion…","loading");
   try{
-    const json=await fetchWithRetry({action:"deleteRow",rowIndex:rowIndex});
-    allData=allData.filter(r=>r.rowIndex!==rowIndex);renderTable();setSyncState("ok",null,false);showToast("Deleted","success");
+    const json=await fetchWithRetry({action:"deleteRow",requestId,expectedVersion});
+    allData=allData.filter(r=>r.requestId!==requestId);renderTable();updateStats();setSyncState("ok",null,false);showToast("Deleted","success");
     // The backend archives (never deletes) the linked Tracker Tasks row in
     // Team Tracker as part of deleteRow — but the local teamTracker array
     // here has no idea that happened, so a My-To-Do view already open (this
@@ -6052,7 +6251,7 @@ async function executeDeleteRow(){
       teamTracker=teamTracker.filter(t=>!(t.source==="Tracker"&&String(t.requestNo)===String(reqNo)));
       if(teamTracker.length!==before&&currentMyToDoName)rerenderMyToDoView(currentMyToDoName);
     }
-  }catch(err){setSyncState("error",null,false);showToast("Delete failed: "+err.message,"error");}
+  }catch(err){if(deletedRecord&&!allData.some(r=>r.requestId===requestId)){allData.push(deletedRecord);renderTable();updateStats();}setSyncState("error",null,false);showToast("Delete failed: "+err.message,"error");}
 }
 
 // ════════════════════════════════════════════════════════════
@@ -6137,19 +6336,19 @@ async function submitRequest(){
   // waiting on the round-trip before seeing anything happen.
   const tempRowIndex=-Date.now(); // negative = safely distinguishable from any real (positive) rowIndex, and still a valid numeric literal when embedded in inline onclick="...(${r.rowIndex},...)" attributes
   const optimisticRow={
-    rowIndex:tempRowIndex, requestNo:"…", requestBy, date, project, priority, category,
+    rowIndex:tempRowIndex, requestNo:"Saving…", requestBy, date, project, priority, category,
     description, linksPath, submissionDate:"", bimSpecialist:specialist, status:"Open",
     comment:"", requesterEmail
   };
   allData.push(optimisticRow);
-  renderTable(); updateStats();
+  recentRequestRows_.add(tempRowIndex);jumpToRequestNo=null;currentPage=1;renderTable();updateStats();
   document.getElementById("confirmReqNo").textContent="Request submitted";
   if(specialist){document.getElementById("confirmSpecialist").style.display="block";document.getElementById("confirmSpecialistName").textContent=specialist;}
   else document.getElementById("confirmSpecialist").style.display="none";
   document.getElementById("confirmNote").innerHTML=specialist
     ?`An email will be sent to you shortly confirming the <strong>submission date</strong> once the specialist reviews your request.<br><br>A second email will notify you when your task is <strong>completed</strong>.`
     :`Your request has been received. You will be notified by email when a specialist is assigned and when your task is completed.`;
-  document.getElementById("confirmSubmitOverlay").classList.add("open");
+  showToast("Saving…","loading");
   setSyncState("syncing",null,false);
   const payload={action:"add",requestBy,requesterEmail,date,project,priority,category,description,linksPath,bimSpecialist:specialist,status:"Open",notifyAssignee:true};
   fetchWithRetry(payload).then(json=>{
@@ -6159,13 +6358,17 @@ async function submitRequest(){
     // Reconcile the temporary row with the real saved one (real Request
     // No., rowIndex, any server-side defaults) in the background — doesn't
     // block the UI, which is already showing the request.
-    loadData(false);
+    if(!json.request)throw new Error("The save response is missing the request record. Refresh to verify it before resubmitting.");
+    Object.assign(optimisticRow,json.request,{rowIndex:tempRowIndex});
+    if(jumpToRequestNo==="Saving…")jumpToRequestNo=String(json.requestNo);
+    renderTable(); updateStats();
+    showToast("Request #"+json.requestNo+" saved","success");
   }).catch(err=>{
     // Roll back the optimistic row if the save actually failed.
     const idx=allData.findIndex(r=>r.rowIndex===tempRowIndex);
     if(idx!==-1){allData.splice(idx,1);renderTable();updateStats();}
     setSyncState("error",null,false);
-    showToast("Your request could not be saved after retrying — please resubmit: "+err.message,"error");
+    showToast("Your request could not be saved after retrying — check your recovery report before resubmitting: "+err.message,"error");
   });
 }
 
@@ -6265,7 +6468,7 @@ async function handleImportRequestsFile(input){
     }
     if(!rows.length){showToast("No rows found in that file — nothing to import","error");return;}
     setSyncState("syncing","Importing "+rows.length+" request(s)…");
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"importRequests",rows})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"importRequests",rows})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error||"Import failed");
     setSyncState("ok");
@@ -6286,7 +6489,7 @@ function updateImportRequestsBtnVisibility(){
   const btn=document.getElementById("importRequestsBtn");
   if(!btn)return;
   const visibleToAll=appSettings.importRequestsVisibility==="all";
-  btn.style.display=(visibleToAll||managerUnlocked)?"inline-flex":"none";
+  btn.style.display=managerUnlocked?"inline-flex":"none";
 }
 
 // ════════════════════════════════════════════════════════════
@@ -6302,7 +6505,7 @@ function switchManageTab(tab){
   if(tab==="mytodocats"){renderMyTodoCategoriesList();}
 }
 function renderManageLists(){
-  document.getElementById("projectsList").innerHTML=projects.map(p=>`<div class="manage-row"><div class="manage-row-main"><div class="manage-row-name">${esc(p.name)}</div>${p.defaultSpecialist?`<div class="manage-row-sub">Default: ${esc(p.defaultSpecialist)}</div>`:""}</div><button class="manage-row-del" onclick="manageAction({action:'deleteProject',name:'${esc(p.name)}'},'Project removed')">🗑</button></div>`).join("")||`<div style="color:var(--ink-mid);font-size:12px;padding:8px;">No projects yet.</div>`;
+  document.getElementById("projectsList").innerHTML=projects.map(p=>`<div class="manage-row"><div class="manage-row-main"><div class="manage-row-name">${esc(p.name)}</div>${p.defaultSpecialist?`<div class="manage-row-sub">Default: ${esc(p.defaultSpecialist)}</div>`:""}</div><button class="manage-row-del" onclick="manageAction({action:'deleteProject',name:'${jsStringContent_(p.name)}'},'Project removed')">🗑</button></div>`).join("")||`<div style="color:var(--ink-mid);font-size:12px;padding:8px;">No projects yet.</div>`;
 
   document.getElementById("assigneesList").innerHTML=assignees.map(a=>{
     const slug=cssSlug(a.name);
@@ -6314,13 +6517,13 @@ function renderManageLists(){
     const myTodoCatBoxes=myTodoCategories.filter(c=>c!=="Tracker Tasks").map(c=>`<label style="display:flex;align-items:center;gap:4px;font-size:12px;font-weight:600;"><input type="checkbox" value="${esc(c)}" ${a.myTodoCategories&&a.myTodoCategories.includes(c)?"checked":""}>${esc(c)}</label>`).join("");
     return `<div class="manage-row" style="flex-direction:column;align-items:stretch;">
       <div style="display:flex;align-items:center;justify-content:space-between;">
-        <div class="manage-row-main" style="cursor:pointer;" onclick="toggleAssigneeEditor('${esc(a.name)}')">
+        <div class="manage-row-main" style="cursor:pointer;" onclick="toggleAssigneeEditor('${jsStringContent_(a.name)}')">
           <div class="manage-row-name">${esc(a.name)}</div>
           <div class="manage-row-sub">${esc(a.email)} · ${esc(rolesSummary)} · ${esc(projSummary)}</div>
         </div>
         <div style="display:flex;gap:6px;align-items:center;">
-          <button class="btn btn-ghost btn-sm" onclick="toggleAssigneeEditor('${esc(a.name)}')">✎ Edit</button>
-          <button class="manage-row-del" onclick="manageAction({action:'deleteAssignee',name:'${esc(a.name)}'},'Assignee removed')">🗑</button>
+          <button class="btn btn-ghost btn-sm" onclick="toggleAssigneeEditor('${jsStringContent_(a.name)}')">✎ Edit</button>
+          <button class="manage-row-del" onclick="manageAction({action:'deleteAssignee',name:'${jsStringContent_(a.name)}'},'Assignee removed')">🗑</button>
         </div>
       </div>
       <div id="assignee-editor-${slug}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
@@ -6330,12 +6533,12 @@ function renderManageLists(){
         <div id="assignee-projects-${slug}" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;max-height:140px;overflow-y:auto;">${projBoxes}</div>
         <div style="font-size:11.5px;font-weight:700;color:var(--ink-mid);margin-bottom:4px;">My-To-Do Categories — direct override (${esc(myTodoCatSummary)}; blank = use their role's categories instead; Tracker Tasks always included)</div>
         <div id="assignee-mytodocats-${slug}" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">${myTodoCatBoxes}</div>
-        <button class="btn btn-primary btn-sm" onclick="saveAssigneeRolesProjects('${esc(a.name)}')">Save</button>
+        <button class="btn btn-primary btn-sm" onclick="saveAssigneeRolesProjects('${jsStringContent_(a.name)}')">Save</button>
       </div>
     </div>`;
   }).join("")||`<div style="color:var(--ink-mid);font-size:12px;padding:8px;">No assignees yet.</div>`;
 
-  document.getElementById("categoriesList").innerHTML=categories.map(c=>`<div class="manage-row"><div class="manage-row-main"><div class="manage-row-name">${esc(c.name)}</div></div><button class="manage-row-del" onclick="manageAction({action:'deleteCategory',name:'${esc(c.name)}'},'Category removed')">🗑</button></div>`).join("")||`<div style="color:var(--ink-mid);font-size:12px;padding:8px;">No categories yet.</div>`;
+  document.getElementById("categoriesList").innerHTML=categories.map(c=>`<div class="manage-row"><div class="manage-row-main"><div class="manage-row-name">${esc(c.name)}</div></div><button class="manage-row-del" onclick="manageAction({action:'deleteCategory',name:'${jsStringContent_(c.name)}'},'Category removed')">🗑</button></div>`).join("")||`<div style="color:var(--ink-mid);font-size:12px;padding:8px;">No categories yet.</div>`;
 
   document.getElementById("rolesList").innerHTML=roles.map(r=>{
     const slug=cssSlug(r.name);
@@ -6345,14 +6548,14 @@ function renderManageLists(){
     const ttSummary=r.ttCategories.length?esc(r.ttCategories.concat("Tracker Tasks").join(", ")):"No restriction — all task groups";
     return `<div class="manage-row" style="flex-direction:column;align-items:stretch;">
       <div style="display:flex;align-items:center;justify-content:space-between;">
-        <div class="manage-row-main" style="cursor:pointer;" onclick="toggleRoleCategoryEditor('${esc(r.name)}')">
+        <div class="manage-row-main" style="cursor:pointer;" onclick="toggleRoleCategoryEditor('${jsStringContent_(r.name)}')">
           <div class="manage-row-name">${esc(r.name)}</div>
           <div class="manage-row-sub">Categories: ${r.categories.length?esc(r.categories.join(", ")):"No restriction — all categories"}</div>
           <div class="manage-row-sub">My-To-Do: ${ttSummary}</div>
         </div>
         <div style="display:flex;gap:6px;align-items:center;">
-          <button class="btn btn-ghost btn-sm" onclick="toggleRoleCategoryEditor('${esc(r.name)}')">✎ Edit</button>
-          <button class="manage-row-del" onclick="deleteRoleUI('${esc(r.name)}')">🗑</button>
+          <button class="btn btn-ghost btn-sm" onclick="toggleRoleCategoryEditor('${jsStringContent_(r.name)}')">✎ Edit</button>
+          <button class="manage-row-del" onclick="deleteRoleUI('${jsStringContent_(r.name)}')">🗑</button>
         </div>
       </div>
       <div id="role-editor-${slug}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
@@ -6360,14 +6563,14 @@ function renderManageLists(){
         <div id="role-cats-${slug}" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">${catBoxes}</div>
         <div style="font-size:11.5px;font-weight:700;color:var(--ink-mid);margin-bottom:4px;">My-To-Do Task Groups (Tracker Tasks always included)</div>
         <div id="role-ttcats-${slug}" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">${ttBoxes}</div>
-        <button class="btn btn-primary btn-sm" onclick="saveRoleCategories('${esc(r.name)}')">Save</button>
+        <button class="btn btn-primary btn-sm" onclick="saveRoleCategories('${jsStringContent_(r.name)}')">Save</button>
       </div>
     </div>`;
   }).join("")||`<div style="color:var(--ink-mid);font-size:12px;padding:8px;">No roles yet — add one below.</div>`;
 }
 async function manageAction(payload,successMsg){
   setSyncState("syncing");
-  try{const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(payload)});const json=await res.json();if(!json.success)throw new Error(json.error);await loadData();renderManageLists();setSyncState("ok");if(successMsg)showToast(successMsg,"success");}
+  try{const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(payload)});const json=await res.json();if(!json.success)throw new Error(json.error);await loadData();renderManageLists();setSyncState("ok");if(successMsg)showToast(successMsg,"success");}
   catch(err){setSyncState("error");showToast("Failed: "+err.message,"error");}
 }
 
@@ -6475,7 +6678,7 @@ async function saveTabConfig(){
   try{
     const settings={};SETTINGS_KEYS.forEach(k=>{settings[k]=appSettings[k]!==undefined?appSettings[k]:"";});
     settings.tabConfig=appSettings.tabConfig;
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error||"Failed");
     setSyncState("ok"); showToast("Tab settings saved","success");
@@ -6493,7 +6696,7 @@ function renderTabAccessAdmin(){
     const slug=slugify(a.name);
     const isMgr=managerEmails.includes((a.email||"").toLowerCase());
     const visible=effectiveTabIdsFor(a);
-    const chips=visible.map(id=>`<span class="tab-access-chip">${esc(labelById[id]||id)}${id!=="requests"?` <a href="javascript:void(0)" onclick="toggleTabAccessChip('${a.name.replace(/'/g,"\\'")}',${JSON.stringify(id)})" title="Hide">×</a>`:""}</span>`).join("");
+    const chips=visible.map(id=>`<span class="tab-access-chip">${esc(labelById[id]||id)}${id!=="requests"?` <a href="javascript:void(0)" onclick="toggleTabAccessChip('${jsStringContent_(a.name)}',${esc(JSON.stringify(id))})" title="Hide">×</a>`:""}</span>`).join("");
     const grantable=catalog.filter(t=>t.kind==="assignee"&&!visible.includes(t.id));
     const specialistCount=specialistSlugsVisibleTo(a).size;
     const isMulti=!isMgr&&specialistCount>1;
@@ -6505,7 +6708,7 @@ function renderTabAccessAdmin(){
     // (badged) once it actually applies.
     const groupCell=isMgr
       ?`<span class="settings-info">Always grouped (manager)</span>`
-      :`<select class="dg-group-select" onchange="setGroupSpecPref('${a.name.replace(/'/g,"\\'")}',this.value)">
+      :`<select class="dg-group-select" onchange="setGroupSpecPref('${jsStringContent_(a.name)}',this.value)">
           <option value="auto" ${groupPref==="auto"?"selected":""}>Auto (${specialistCount>1?"grouped":"flat"})</option>
           <option value="on" ${groupPref==="on"?"selected":""}>Always grouped</option>
           <option value="off" ${groupPref==="off"?"selected":""}>Always flat</option>
@@ -6519,7 +6722,7 @@ function renderTabAccessAdmin(){
             <option value="">+ Grant a tab…</option>
             ${grantable.map(t=>`<option value="${t.id}">${esc(t.label)}</option>`).join("")}
           </select>
-          <button class="btn btn-ghost btn-sm" onclick="grantTabAccess('${a.name.replace(/'/g,"\\'")}')">Grant</button>
+          <button class="btn btn-ghost btn-sm" onclick="grantTabAccess('${jsStringContent_(a.name)}')">Grant</button>
         </div>
       </td>
       <td>${groupCell}</td>
@@ -6671,7 +6874,7 @@ function renderDashboardWidgetsAdmin(){
   el.innerHTML=`<table class="dash-table"><thead><tr><th>Specialist</th>${DASH_WIDGET_CATALOG.map(w=>`<th style="text-align:center;">${esc(w.label)}</th>`).join("")}</tr></thead><tbody>
     ${assignees.map(a=>{
       const hidden=new Set(splitCsv(a.prefHiddenWidgets));
-      return `<tr><td style="font-weight:700;">${esc(a.name)}</td>${DASH_WIDGET_CATALOG.map(w=>`<td style="text-align:center;"><input type="checkbox" ${hidden.has(w.id)?"":"checked"} onchange="toggleDashboardWidget('${a.name.replace(/'/g,"\\'")}',${JSON.stringify(w.id)},this.checked)"></td>`).join("")}</tr>`;
+      return `<tr><td style="font-weight:700;">${esc(a.name)}</td>${DASH_WIDGET_CATALOG.map(w=>`<td style="text-align:center;"><input type="checkbox" ${hidden.has(w.id)?"":"checked"} onchange="toggleDashboardWidget('${jsStringContent_(a.name)}',${JSON.stringify(w.id)},this.checked)"></td>`).join("")}</tr>`;
     }).join("")}
   </tbody></table>`;
 }
@@ -6711,7 +6914,7 @@ function grantTabAccess(name){
 async function saveTabAccessForAssignee(a){
   setSyncState("syncing");
   try{
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"updateAssigneeTabAccess",name:a.name,hiddenTabs:a.prefHiddenTabs||"",extraAccess:a.prefExtraAccess||"",hiddenWidgets:a.prefHiddenWidgets||""})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"updateAssigneeTabAccess",name:a.name,hiddenTabs:a.prefHiddenTabs||"",extraAccess:a.prefExtraAccess||"",hiddenWidgets:a.prefHiddenWidgets||""})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error||"Failed");
     setSyncState("ok"); showToast("Tab access updated for "+a.name,"success");
@@ -6777,8 +6980,8 @@ function renderMyTodoCategoriesList(){
     return `<div class="manage-row">
       <div class="manage-row-main"><div class="manage-row-name">${esc(c)}${locked?` <span style="font-size:11px;font-weight:400;color:var(--ink-mid);">(fixed — synced from Requests)</span>`:""}</div></div>
       ${locked?"":`<div style="display:flex;gap:6px;">
-        <button class="btn btn-ghost btn-sm" onclick="renameMyToDoCategoryUI('${esc(c)}')">✎ Rename</button>
-        <button class="manage-row-del" onclick="deleteMyToDoCategoryUI('${esc(c)}')">🗑</button>
+        <button class="btn btn-ghost btn-sm" onclick="renameMyToDoCategoryUI('${jsStringContent_(c)}')">✎ Rename</button>
+        <button class="manage-row-del" onclick="deleteMyToDoCategoryUI('${jsStringContent_(c)}')">🗑</button>
       </div>`}
     </div>`;
   }).join("");
@@ -6788,7 +6991,7 @@ async function addMyToDoCategoryUI(){
   if(!name){showToast("Category name required","error");return;}
   setSyncState("syncing");
   try{
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"addMyToDoCategory",name})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"addMyToDoCategory",name})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error);
     await loadData();
@@ -6802,7 +7005,7 @@ async function renameMyToDoCategoryUI(oldName){
   if(!newName||!newName.trim()||newName.trim()===oldName)return;
   setSyncState("syncing");
   try{
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"renameMyToDoCategory",oldName,newName:newName.trim()})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"renameMyToDoCategory",oldName,newName:newName.trim()})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error);
     await loadData();
@@ -6814,7 +7017,7 @@ async function deleteMyToDoCategoryUI(name){
   if(!confirm(`Delete category "${name}"? This only works if it has no tasks in it.`))return;
   setSyncState("syncing");
   try{
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"deleteMyToDoCategory",name})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"deleteMyToDoCategory",name})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error);
     await loadData();
@@ -6886,7 +7089,7 @@ async function applyEmailSchedule(){
   const hour=document.getElementById("cfg-dailySummaryHour").value;
   setSyncState("syncing","Updating schedule…");
   try{
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"updateEmailSchedule",hour})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"updateEmailSchedule",hour})});
     const json=await res.json();
     if(!json.success)throw new Error(json.error||"Failed");
     appSettings.dailySummaryHour=String(json.hour);
@@ -6908,7 +7111,7 @@ async function saveSettings(){
   });
   setSyncState("syncing");
   try{
-    const res=await fetch(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
+    const res=await apiFetch_(APPS_SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({action:"saveSettings",settings})});
     const json=await res.json();if(!json.success)throw new Error(json.error);
     Object.assign(appSettings,settings);initialDefaultsApplied=false;applyAppSettings();renderTable();setSyncState("ok");showToast("Settings saved","success");
   }catch(err){setSyncState("error");showToast("Save failed: "+err.message,"error");}
@@ -8025,8 +8228,7 @@ let toastHideTimer=null;
 function esc(str){if(!str)return"";return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 
 document.getElementById("myRequestsBtn").style.display="none";
-loadData().then(restoreActiveTab_);
-replayPendingOps_();
+bootstrapTracker_();
 </script>
 </body>
 </html>
