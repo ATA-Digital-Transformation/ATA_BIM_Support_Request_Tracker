@@ -1622,10 +1622,10 @@ let trackerReadSequence_=0;
 const trackerPendingWrites_=new Map();
 const recentRequestRows_=new Set();
 let trackerReplayRunning_=false;
-function trackerSessionKey_(){return 'ata-session-v1:'+TRACKER_CONFIG.appsScriptUrl;}
-function forgetTrackerSession_(){try{sessionStorage.removeItem(trackerSessionKey_());}catch(e){}}
+function trackerSessionKey_(){return 'ata-session-v2:'+TRACKER_CONFIG.appsScriptUrl;}
+function forgetTrackerSession_(){try{localStorage.removeItem(trackerSessionKey_());sessionStorage.removeItem('ata-session-v1:'+TRACKER_CONFIG.appsScriptUrl);}catch(e){}}
 function savedTrackerToken_(){
-  try{const s=JSON.parse(sessionStorage.getItem(trackerSessionKey_())||'null');if(s&&typeof s.token==='string'&&s.exp*1000>Date.now()+30000)return s.token;}catch(e){}
+  try{const s=JSON.parse(localStorage.getItem(trackerSessionKey_())||'null');if(s&&typeof s.token==='string'&&s.token.startsWith('ata_session_')&&s.exp*1000>Date.now()+30000)return s.token;}catch(e){}
   forgetTrackerSession_();return null;
 }
 const trackerInitialMarkup_=new Map();
@@ -1685,18 +1685,27 @@ async function acceptGoogleSignIn_(result){
     const data=await sendTrackerRequest_({action:'getData'},epoch);
     if(epoch!==trackerAuth.epoch)return;
     trackerAuth.user=data.user;
-    try{sessionStorage.setItem(trackerSessionKey_(),JSON.stringify({token:result.credential,exp:data.user.exp}));}catch(e){}
+    trackerAuth.token=data.sessionCredential||result.credential;
+    try{if(trackerAuth.token.startsWith('ata_session_'))localStorage.setItem(trackerSessionKey_(),JSON.stringify({token:trackerAuth.token,exp:data.user.exp}));}catch(e){}
     currentUser=data.user;
     rememberServerData_(data);
     applyLoadedData_(data);
     hideLoginScreen();hideLoadScreen();setSyncState('ok');
     loadProfile();restoreActiveTab_();
     clearTimeout(trackerAuth.expiryTimer);
-    trackerAuth.expiryTimer=setTimeout(()=>expireTrackerSession_(),Math.max(0,data.user.exp*1000-Date.now()));
+    scheduleTrackerExpiry_();
     await replaySecureQueue_();
   }catch(e){
     if(epoch===trackerAuth.epoch){forgetTrackerSession_();trackerAuth.token=null;trackerAuth.user=null;currentUser=null;authMessage_(e.message);}
   }
+}
+function scheduleTrackerExpiry_(){
+  clearTimeout(trackerAuth.expiryTimer);
+  if(!trackerAuth.user)return;
+  const remaining=trackerAuth.user.exp*1000-Date.now();
+  if(remaining<=0){expireTrackerSession_();return;}
+  // Browser timers overflow above roughly 24.8 days; recheck in smaller steps.
+  trackerAuth.expiryTimer=setTimeout(scheduleTrackerExpiry_,Math.min(remaining,86400000));
 }
 function expireTrackerSession_(){
   forgetTrackerSession_();
@@ -1714,12 +1723,17 @@ function clearTrackerData_(){
   if(typeof lastAssigneeTabsSignature_!=='undefined')lastAssigneeTabsSignature_=null;
   for(const el of document.querySelectorAll('.modal-overlay.open,.drawer.open'))el.classList.remove('open');
 }
-function secureSignOut_(){
+async function secureSignOut_(){
+  const credential=trackerAuth.token;
   forgetTrackerSession_();
   trackerAuth.token=null;trackerAuth.epoch++;clearTimeout(trackerAuth.expiryTimer);
   if(window.google&&google.accounts)google.accounts.id.disableAutoSelect();
   // Reload clears every in-memory render and prevents late responses being shown.
-  clearTrackerData_();window.location.reload();
+  clearTrackerData_();
+  try{
+    if(credential){const res=await fetch(TRACKER_CONFIG.appsScriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},credentials:'omit',body:JSON.stringify({action:'signOut',idToken:credential})});const data=await res.json();if(!data.success)throw new Error(data.error);}
+  }catch(e){authMessage_('Signed out on this browser. The server could not confirm session revocation.');return;}
+  window.location.reload();
 }
 function rememberServerData_(data){
   if(data.data){trackerSnapshots.requests.clear();data.data.forEach(r=>trackerSnapshots.requests.set(r.requestId,{...r}));}
