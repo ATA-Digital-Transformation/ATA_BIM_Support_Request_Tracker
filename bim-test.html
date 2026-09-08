@@ -1620,6 +1620,14 @@ let trackerWriteChain=Promise.resolve();
 let trackerMutationRevision_=0;
 let trackerReadSequence_=0;
 const trackerPendingWrites_=new Map();
+const recentRequestRows_=new Set();
+let trackerReplayRunning_=false;
+function trackerSessionKey_(){return 'ata-session-v1:'+TRACKER_CONFIG.appsScriptUrl;}
+function forgetTrackerSession_(){try{sessionStorage.removeItem(trackerSessionKey_());}catch(e){}}
+function savedTrackerToken_(){
+  try{const s=JSON.parse(sessionStorage.getItem(trackerSessionKey_())||'null');if(s&&typeof s.token==='string'&&s.exp*1000>Date.now()+30000)return s.token;}catch(e){}
+  forgetTrackerSession_();return null;
+}
 const trackerInitialMarkup_=new Map();
 const trackerReadActions=new Set(['getData','getKpiData']);
 const trackerPermanentErrors=new Set(['FORBIDDEN','INVALID_REQUEST','CONFLICT','NOT_FOUND','OP_CONFLICT','OP_UNCERTAIN','SETUP_REQUIRED','IDENTITY_BINDING_REQUIRED']);
@@ -1641,13 +1649,15 @@ async function bootstrapTracker_(){
     // Never display or replay unauthenticated snapshots from the old version.
     try{localStorage.removeItem('ata-user');localStorage.removeItem('ata-bim-local-cache-v1');}catch(e){}
     authMessage_('Sign in with your approved Google account to open the tracker.');
+    const remembered=savedTrackerToken_();
+    if(remembered)await acceptGoogleSignIn_({credential:remembered});
     try{
       const res=await fetch(TRACKER_CONFIG.appsScriptUrl,{cache:'no-store',credentials:'omit'});
       const data=await res.json();
       if(!data.success || !data.authenticationRequired || data.apiVersion!=='ata-secure-v1')throw new Error(data.error||'Deploy the updated Apps Script before using this website.');
       googleClientId=data.googleClientId;
       await initializeSecureGoogleAuth_();
-    }catch(e){authMessage_(e.message+' Use Refresh to try again.');}
+    }catch(e){if(!trackerAuth.user)authMessage_(e.message+' Use Refresh to try again.');}
     finally{hideLoadScreen();trackerAuth.boot=null;}
   })();
   return trackerAuth.boot;
@@ -1675,6 +1685,7 @@ async function acceptGoogleSignIn_(result){
     const data=await sendTrackerRequest_({action:'getData'},epoch);
     if(epoch!==trackerAuth.epoch)return;
     trackerAuth.user=data.user;
+    try{sessionStorage.setItem(trackerSessionKey_(),JSON.stringify({token:result.credential,exp:data.user.exp}));}catch(e){}
     currentUser=data.user;
     rememberServerData_(data);
     applyLoadedData_(data);
@@ -1684,10 +1695,11 @@ async function acceptGoogleSignIn_(result){
     trackerAuth.expiryTimer=setTimeout(()=>expireTrackerSession_(),Math.max(0,data.user.exp*1000-Date.now()));
     await replaySecureQueue_();
   }catch(e){
-    if(epoch===trackerAuth.epoch){trackerAuth.token=null;trackerAuth.user=null;currentUser=null;authMessage_(e.message);}
+    if(epoch===trackerAuth.epoch){forgetTrackerSession_();trackerAuth.token=null;trackerAuth.user=null;currentUser=null;authMessage_(e.message);}
   }
 }
 function expireTrackerSession_(){
+  forgetTrackerSession_();
   trackerAuth.token=null;trackerAuth.epoch++;
   // Preserve only account-scoped queued changes. Sensitive content is cleared.
   clearTrackerData_();
@@ -1703,6 +1715,7 @@ function clearTrackerData_(){
   for(const el of document.querySelectorAll('.modal-overlay.open,.drawer.open'))el.classList.remove('open');
 }
 function secureSignOut_(){
+  forgetTrackerSession_();
   trackerAuth.token=null;trackerAuth.epoch++;clearTimeout(trackerAuth.expiryTimer);
   if(window.google&&google.accounts)google.accounts.id.disableAutoSelect();
   // Reload clears every in-memory render and prevents late responses being shown.
@@ -1821,7 +1834,10 @@ async function executeSecureSave_(payload,attemptsOverride,epoch){
   }finally{}
 }
 async function replaySecureQueue_(){
+  if(trackerReplayRunning_)return;
   if(!trackerAuth.user||recoveryMethod_()==='off')return;
+  trackerReplayRunning_=true;
+  try{
   const pending=readSecureQueue_();
   const blocked=pending.filter(o=>o.blocked);
   if(blocked.length)showToast(blocked.length+' saved change(s) need review. Open your recovery report.','error');
@@ -1837,6 +1853,7 @@ async function replaySecureQueue_(){
     finally{pendingSaveCount=Math.max(0,pendingSaveCount-1);updateSaveStatusBar_();}
   }
   if(pending.some(o=>!o.blocked))await loadData(false);
+  }finally{trackerReplayRunning_=false;updateSaveStatusBar_();}
 }
 async function apiFetch_(url,options){
   const input=options&&options.body?JSON.parse(options.body):{action:'getData'};
@@ -5670,7 +5687,7 @@ function renderTable(){
   const jumpBanner=document.getElementById("jumpIsolationBanner");
   if(jumpBanner){
     jumpBanner.style.display=jumpToRequestNo?"flex":"none";
-    if(jumpToRequestNo)document.getElementById("jumpIsolationBannerText").textContent=jumpToRequestNo==="Saving…"?"New request · saving to Google Sheets…":`Showing Request #${jumpToRequestNo} only`;
+    if(jumpToRequestNo)document.getElementById("jumpIsolationBannerText").textContent=`Showing Request #${jumpToRequestNo} only`;
   }
   let rows=getFilteredRows();
   rows.sort((a,b)=>{
@@ -5678,6 +5695,8 @@ function renderTable(){
     if(sortKey==="requestNo"){av=parseInt(av)||0;bv=parseInt(bv)||0;}
     return av<bv?-sortDir:av>bv?sortDir:0;
   });
+  const recent=allData.filter(r=>recentRequestRows_.has(r.rowIndex));
+  if(!jumpToRequestNo&&recent.length)rows=recent.slice().reverse().concat(rows.filter(r=>!recentRequestRows_.has(r.rowIndex)));
   const total=rows.length;
   const rpp=rowsPerPage||parseInt(document.getElementById("filterRowsPerPage").value)||10;
   const totalPages=rpp===0?1:Math.max(1,Math.ceil(total/rpp));
@@ -5960,9 +5979,9 @@ function updateSaveStatusBar_(){
   if(pendingSaveCount>0){
     bar.classList.remove("save-status-done");
     bar.classList.add("show");
-    if(textEl)textEl.textContent=pendingSaveCount>1?`Saving ${pendingSaveCount} changes…`:"Saving changes…";
+    if(textEl)textEl.textContent=trackerReplayRunning_?"Syncing pending changes…":"Saving…";
   }else if(bar.classList.contains("show")){
-    // Only flash "All changes saved" if the bar was actually showing —
+    // Only flash "Saved" if the bar was actually showing —
     // otherwise every page load would briefly flicker it for no reason.
     if(textEl)textEl.textContent="All changes saved";
     bar.classList.add("save-status-done");
@@ -6300,14 +6319,14 @@ async function submitRequest(){
     comment:"", requesterEmail
   };
   allData.push(optimisticRow);
-  currentPage=1; goToRequestInTab("Saving…"); updateStats();
+  recentRequestRows_.add(tempRowIndex);jumpToRequestNo=null;currentPage=1;renderTable();updateStats();
   document.getElementById("confirmReqNo").textContent="Request submitted";
   if(specialist){document.getElementById("confirmSpecialist").style.display="block";document.getElementById("confirmSpecialistName").textContent=specialist;}
   else document.getElementById("confirmSpecialist").style.display="none";
   document.getElementById("confirmNote").innerHTML=specialist
     ?`An email will be sent to you shortly confirming the <strong>submission date</strong> once the specialist reviews your request.<br><br>A second email will notify you when your task is <strong>completed</strong>.`
     :`Your request has been received. You will be notified by email when a specialist is assigned and when your task is completed.`;
-  showToast("Request added to the table. Saving to Google Sheets…","loading");
+  showToast("Saving…","loading");
   setSyncState("syncing",null,false);
   const payload={action:"add",requestBy,requesterEmail,date,project,priority,category,description,linksPath,bimSpecialist:specialist,status:"Open",notifyAssignee:true};
   fetchWithRetry(payload).then(json=>{
