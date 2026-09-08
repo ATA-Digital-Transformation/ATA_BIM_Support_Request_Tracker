@@ -6100,7 +6100,7 @@ function openDrawer(rowIndex){
     <div class="drawer-grid">
       <div class="drawer-field"><label>Requested By</label><input id="dr-requestBy" value="${esc(r.requestBy)}"></div>
       <div class="drawer-field"><label>Date</label><input id="dr-date" value="${esc(r.date)}"></div>
-      <div class="drawer-field"><label>Project</label><select id="dr-project" onchange="drawerProjectChange()">${projects.map(p=>`<option value="${esc(p.name)}" ${p.name===r.project?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
+      <div class="drawer-field"><label>Project</label><select id="dr-project" onchange="drawerProjectChange()"><option value="">— Select —</option>${r.project&&!projects.some(p=>p.name===r.project)?`<option value="${esc(r.project)}" selected>${esc(r.project)}</option>`:""}${projects.map(p=>`<option value="${esc(p.name)}" ${p.name===r.project?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>
       <div class="drawer-field"><label>Priority</label><select id="dr-priority">${PRIORITIES.map(p=>`<option ${p===r.priority?"selected":""}>${p}</option>`).join("")}</select></div>
       <div class="drawer-field"><label>Category</label><select id="dr-category"><option value="">— Select —</option>${categories.map(c=>`<option ${c.name===r.category?"selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
       <div class="drawer-field"><label>Status</label><select id="dr-status">${STATUSES.map(s=>`<option ${s===r.status?"selected":""}>${s}</option>`).join("")}</select></div>
