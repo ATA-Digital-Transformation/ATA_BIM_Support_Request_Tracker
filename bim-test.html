@@ -1619,6 +1619,7 @@ const trackerSnapshots={requests:new Map(),tasks:new Map(),versions:new Map()};
 let trackerWriteChain=Promise.resolve();
 let trackerMutationRevision_=0;
 let trackerReadSequence_=0;
+const trackerPendingWrites_=new Map();
 const trackerInitialMarkup_=new Map();
 const trackerReadActions=new Set(['getData','getKpiData']);
 const trackerPermanentErrors=new Set(['FORBIDDEN','INVALID_REQUEST','CONFLICT','NOT_FOUND','OP_CONFLICT','OP_UNCERTAIN','SETUP_REQUIRED','IDENTITY_BINDING_REQUIRED']);
@@ -1721,7 +1722,8 @@ function prepareTrackerPayload_(input){
     p.expectedVersion=p.expectedVersion||saved.version;
     // Drawers submit all fields. Remove unchanged ones to enforce field grants.
     for(const k of ['requestBy','date','project','priority','category','description','linksPath','submissionDate','bimSpecialist','status','comment']){
-      if(p[k]!==undefined && String(p[k]??'')===String(saved[k]??''))delete p[k];
+      const earlierChange=Array.from(trackerPendingWrites_.values()).some(q=>q.requestId===p.requestId&&q[k]!==undefined);
+      if(!earlierChange && p[k]!==undefined && String(p[k]??'')===String(saved[k]??''))delete p[k];
     }
     delete p.rowIndex;delete p.requestNo;
   }
@@ -1780,6 +1782,7 @@ function removeSecureOp_(id){writeSecureQueue_(readSecureQueue_().filter(o=>o.id
 async function secureSaveWithRetry_(input,attemptsOverride){
   // Resolve immutable identity now, before a deletion/refresh can shift rows.
   const payload=prepareTrackerPayload_(input);
+  trackerPendingWrites_.set(payload.clientOpId,payload);
   trackerMutationRevision_++;
   const epoch=trackerAuth.epoch;
   if(recoveryMethod_()!=='off')persistSecureOp_(payload,false);
@@ -1794,7 +1797,7 @@ async function secureSaveWithRetry_(input,attemptsOverride){
     }
     return executeSecureSave_(payload,attemptsOverride,epoch);
   };
-  const next=trackerWriteChain.then(work,work).finally(()=>{pendingSaveCount=Math.max(0,pendingSaveCount-1);updateSaveStatusBar_();});
+  const next=trackerWriteChain.then(work,work).finally(()=>{trackerPendingWrites_.delete(payload.clientOpId);pendingSaveCount=Math.max(0,pendingSaveCount-1);updateSaveStatusBar_();});
   trackerWriteChain=next.catch(()=>{});
   return next;
 }
