@@ -1648,9 +1648,13 @@ async function bootstrapTracker_(){
     }
     // Never display or replay unauthenticated snapshots from the old version.
     try{localStorage.removeItem('ata-user');localStorage.removeItem('ata-bim-local-cache-v1');}catch(e){}
-    authMessage_('Sign in with your approved Google account to open the tracker.');
     const remembered=savedTrackerToken_();
-    if(remembered)await acceptGoogleSignIn_({credential:remembered});
+    if(remembered){
+      hideLoginScreen();
+      const status=document.getElementById('loadStatus');
+      if(status)status.textContent='Loading your workspace…';
+      await acceptGoogleSignIn_({credential:remembered},true);
+    }else authMessage_('Sign in with your approved Google account to open the tracker.');
     try{
       const res=await fetch(TRACKER_CONFIG.appsScriptUrl,{cache:'no-store',credentials:'omit'});
       const data=await res.json();
@@ -1674,13 +1678,13 @@ async function initializeSecureGoogleAuth_(){
     }
     await new Promise(r=>setTimeout(r,100));
   }
-  authMessage_('Google sign-in could not load. Check your connection and refresh the page.');
+  if(!trackerAuth.user)authMessage_('Google sign-in could not load. Check your connection and refresh the page.');
 }
-async function acceptGoogleSignIn_(result){
+async function acceptGoogleSignIn_(result,restoring=false){
   if(!result||!result.credential)return;
   const epoch=++trackerAuth.epoch;
   trackerAuth.token=result.credential;
-  authMessage_('Checking your account…');
+  if(!restoring)authMessage_('Checking your account…');
   try{
     const data=await sendTrackerRequest_({action:'getData'},epoch);
     if(epoch!==trackerAuth.epoch)return;
