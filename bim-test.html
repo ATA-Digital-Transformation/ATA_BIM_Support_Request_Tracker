@@ -1617,6 +1617,8 @@ body.dark .datagrid tbody tr.dg-group-row td{background:rgba(255,255,255,.03);}
 const trackerAuth={token:null,user:null,epoch:0,boot:null,googleReady:false,expiryTimer:null};
 const trackerSnapshots={requests:new Map(),tasks:new Map(),versions:new Map()};
 let trackerWriteChain=Promise.resolve();
+let trackerMutationRevision_=0;
+let trackerReadSequence_=0;
 const trackerInitialMarkup_=new Map();
 const trackerReadActions=new Set(['getData','getKpiData']);
 const trackerPermanentErrors=new Set(['FORBIDDEN','INVALID_REQUEST','CONFLICT','NOT_FOUND','OP_CONFLICT','OP_UNCERTAIN','SETUP_REQUIRED','IDENTITY_BINDING_REQUIRED']);
@@ -1732,11 +1734,14 @@ function prepareTrackerPayload_(input){
   return p;
 }
 async function sendTrackerRequest_(payload,epoch){
+  const readRevision=trackerMutationRevision_;
+  const readSequence=payload.action==='getData'?++trackerReadSequence_:0;
   if(epoch===undefined)epoch=trackerAuth.epoch;
   if(!trackerAuth.token)throw Object.assign(new Error('Please sign in to continue.'),{code:'AUTH_REQUIRED'});
   const res=await fetch(TRACKER_CONFIG.appsScriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},credentials:'omit',cache:'no-store',body:JSON.stringify({...payload,idToken:trackerAuth.token})});
   const data=await res.json();
   if(epoch!==trackerAuth.epoch)throw Object.assign(new Error('The signed-in account changed. Sign in again to recover your pending save.'),{code:'AUTH_REQUIRED'});
+  if(readSequence&&(pendingSaveCount>0||readRevision!==trackerMutationRevision_||readSequence!==trackerReadSequence_))throw Object.assign(new Error('Refresh postponed while changes are saving.'),{code:'STALE_READ'});
   if(!data.success){
     if(data.code==='AUTH_REQUIRED')expireTrackerSession_();
     throw Object.assign(new Error(data.error||'The request could not be completed.'),{code:data.code||'SERVER_ERROR'});
@@ -1775,6 +1780,7 @@ function removeSecureOp_(id){writeSecureQueue_(readSecureQueue_().filter(o=>o.id
 async function secureSaveWithRetry_(input,attemptsOverride){
   // Resolve immutable identity now, before a deletion/refresh can shift rows.
   const payload=prepareTrackerPayload_(input);
+  trackerMutationRevision_++;
   const epoch=trackerAuth.epoch;
   if(recoveryMethod_()!=='off')persistSecureOp_(payload,false);
   pendingSaveCount++;updateSaveStatusBar_();
@@ -2928,7 +2934,8 @@ function editTeamCell(td,taskId,field,type,options){
         scheduleTrackerRefresh_();
       }
     }catch(err){
-      t[field]=prevVal;
+      const latestTask=teamTracker.find(x=>x.id===taskId);
+      if(latestTask&&latestTask[field]===newVal)latestTask[field]=prevVal;
       deferredRerenderMyToDoView_(currentMyToDoName);
       setSyncState("error",null,false);
       showToast("Update failed — change reverted: "+err.message,"error");
@@ -4491,7 +4498,8 @@ async function submitAddTaskModal(){
     // Reconcile the temporary row with the real saved row (real id, any
     // server-side defaults) in the background — doesn't block the UI, which
     // is already showing the task.
-    loadData(false);
+    if(json.task){Object.assign(optimisticTask,json.task);if(currentMyToDoName)deferredRerenderMyToDoView_(currentMyToDoName);}
+    else scheduleTrackerRefresh_();
   }catch(err){
     // Roll back the optimistic row if the save actually failed.
     const idx=teamTracker.findIndex(t=>t.id===tempId);
@@ -5413,6 +5421,7 @@ let googleAuthInitStarted_=false;
 function tryInitGoogleAuth_(){ initializeSecureGoogleAuth_(); }
 async function loadData(blocking){
   if(!trackerAuth.token){ await bootstrapTracker_(); return; }
+  if(pendingSaveCount>0){scheduleTrackerRefresh_();return;}
   // blocking defaults to true (a manual/explicit reload can show the full
   // overlay), but background refreshes — e.g. after submitting a new
   // request, where a confirmation modal is already open — pass false so
@@ -5450,6 +5459,7 @@ async function loadData(blocking){
     loadReassureTimers.forEach(clearTimeout);
     hideLoadScreen();
   }catch(err){
+    if(err.code==="STALE_READ"){loadReassureTimers.forEach(clearTimeout);scheduleTrackerRefresh_();return;}
     loadReassureTimers.forEach(clearTimeout);
     if(usedCache){
       // Cached data is already rendered underneath — don't show the hard
@@ -5657,7 +5667,7 @@ function renderTable(){
   const jumpBanner=document.getElementById("jumpIsolationBanner");
   if(jumpBanner){
     jumpBanner.style.display=jumpToRequestNo?"flex":"none";
-    if(jumpToRequestNo)document.getElementById("jumpIsolationBannerText").textContent=`Showing Request #${jumpToRequestNo} only`;
+    if(jumpToRequestNo)document.getElementById("jumpIsolationBannerText").textContent=jumpToRequestNo==="Saving…"?"New request · saving to Google Sheets…":`Showing Request #${jumpToRequestNo} only`;
   }
   let rows=getFilteredRows();
   rows.sort((a,b)=>{
@@ -6178,9 +6188,13 @@ function closeConfirm(){document.getElementById("confirmOverlay").classList.remo
 async function executeDeleteRow(){
   const rowIndex=pendingDeleteRowIndex, reqNo=pendingDeleteReqNo, requestId=pendingDeleteRequestId, expectedVersion=pendingDeleteVersion;
   closeConfirm();if(!rowIndex)return;setSyncState("syncing",null,false);
+  const deletedRecord=allData.find(r=>r.requestId===requestId);
+  allData=allData.filter(r=>r.requestId!==requestId);
+  if(drawerRequestId===requestId)document.getElementById("drawer").classList.remove("open");
+  renderTable();updateStats();showToast("Request removed from the table. Saving deletion…","loading");
   try{
     const json=await fetchWithRetry({action:"deleteRow",requestId,expectedVersion});
-    allData=allData.filter(r=>r.requestId!==requestId);renderTable();setSyncState("ok",null,false);showToast("Deleted","success");
+    allData=allData.filter(r=>r.requestId!==requestId);renderTable();updateStats();setSyncState("ok",null,false);showToast("Deleted","success");
     // The backend archives (never deletes) the linked Tracker Tasks row in
     // Team Tracker as part of deleteRow — but the local teamTracker array
     // here has no idea that happened, so a My-To-Do view already open (this
@@ -6193,7 +6207,7 @@ async function executeDeleteRow(){
       teamTracker=teamTracker.filter(t=>!(t.source==="Tracker"&&String(t.requestNo)===String(reqNo)));
       if(teamTracker.length!==before&&currentMyToDoName)rerenderMyToDoView(currentMyToDoName);
     }
-  }catch(err){setSyncState("error",null,false);showToast("Delete failed: "+err.message,"error");}
+  }catch(err){if(deletedRecord&&!allData.some(r=>r.requestId===requestId)){allData.push(deletedRecord);renderTable();updateStats();}setSyncState("error",null,false);showToast("Delete failed: "+err.message,"error");}
 }
 
 // ════════════════════════════════════════════════════════════
@@ -6278,19 +6292,19 @@ async function submitRequest(){
   // waiting on the round-trip before seeing anything happen.
   const tempRowIndex=-Date.now(); // negative = safely distinguishable from any real (positive) rowIndex, and still a valid numeric literal when embedded in inline onclick="...(${r.rowIndex},...)" attributes
   const optimisticRow={
-    rowIndex:tempRowIndex, requestNo:"…", requestBy, date, project, priority, category,
+    rowIndex:tempRowIndex, requestNo:"Saving…", requestBy, date, project, priority, category,
     description, linksPath, submissionDate:"", bimSpecialist:specialist, status:"Open",
     comment:"", requesterEmail
   };
   allData.push(optimisticRow);
-  renderTable(); updateStats();
+  currentPage=1; goToRequestInTab("Saving…"); updateStats();
   document.getElementById("confirmReqNo").textContent="Request submitted";
   if(specialist){document.getElementById("confirmSpecialist").style.display="block";document.getElementById("confirmSpecialistName").textContent=specialist;}
   else document.getElementById("confirmSpecialist").style.display="none";
   document.getElementById("confirmNote").innerHTML=specialist
     ?`An email will be sent to you shortly confirming the <strong>submission date</strong> once the specialist reviews your request.<br><br>A second email will notify you when your task is <strong>completed</strong>.`
     :`Your request has been received. You will be notified by email when a specialist is assigned and when your task is completed.`;
-  document.getElementById("confirmSubmitOverlay").classList.add("open");
+  showToast("Request added to the table. Saving to Google Sheets…","loading");
   setSyncState("syncing",null,false);
   const payload={action:"add",requestBy,requesterEmail,date,project,priority,category,description,linksPath,bimSpecialist:specialist,status:"Open",notifyAssignee:true};
   fetchWithRetry(payload).then(json=>{
@@ -6300,13 +6314,17 @@ async function submitRequest(){
     // Reconcile the temporary row with the real saved one (real Request
     // No., rowIndex, any server-side defaults) in the background — doesn't
     // block the UI, which is already showing the request.
-    loadData(false);
+    if(!json.request)throw new Error("The save response is missing the request record. Refresh to verify it before resubmitting.");
+    Object.assign(optimisticRow,json.request,{rowIndex:tempRowIndex});
+    if(jumpToRequestNo==="Saving…")jumpToRequestNo=String(json.requestNo);
+    renderTable(); updateStats();
+    showToast("Request #"+json.requestNo+" saved","success");
   }).catch(err=>{
     // Roll back the optimistic row if the save actually failed.
     const idx=allData.findIndex(r=>r.rowIndex===tempRowIndex);
     if(idx!==-1){allData.splice(idx,1);renderTable();updateStats();}
     setSyncState("error",null,false);
-    showToast("Your request could not be saved after retrying — please resubmit: "+err.message,"error");
+    showToast("Your request could not be saved after retrying — check your recovery report before resubmitting: "+err.message,"error");
   });
 }
 
