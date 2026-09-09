@@ -1629,7 +1629,7 @@ function savedTrackerToken_(){
   forgetTrackerSession_();return null;
 }
 const trackerInitialMarkup_=new Map();
-const trackerReadActions=new Set(['getData','getKpiData']);
+const trackerReadActions=new Set(['getData','getKpiData','getPerformanceReview']);
 const trackerPermanentErrors=new Set(['FORBIDDEN','INVALID_REQUEST','CONFLICT','NOT_FOUND','OP_CONFLICT','OP_UNCERTAIN','SETUP_REQUIRED','IDENTITY_BINDING_REQUIRED']);
 
 function authMessage_(message){
@@ -8225,6 +8225,57 @@ function esc(str){if(!str)return"";return String(str).replace(/&/g,"&amp;").repl
 
 document.getElementById("myRequestsBtn").style.display="none";
 bootstrapTracker_();
+
+// Additive Overview. Original tab renderers and layouts remain intact.
+let overviewReview=null,overviewBusy=false,overviewRead=0;
+const priorRenderTabBar_=renderTabBar;
+renderTabBar=function(){priorRenderTabBar_();installOverview_();};
+const priorSwitchTab_=switchTab;
+switchTab=function(tab){priorSwitchTab_(tab);if(tab==='overview')renderOverview_();};
+const priorClearTrackerData_=clearTrackerData_;
+clearTrackerData_=function(){overviewRead++;overviewReview=null;const p=document.getElementById('panel-overview');if(p)p.innerHTML='';priorClearTrackerData_();};
+function installOverview_(){
+ const bar=document.getElementById('mainTabBar'),base=document.getElementById('panel-requests');if(!bar||!base)return;
+ if(!document.getElementById('tab-overview')){const b=document.createElement('button');b.id='tab-overview';b.className='tab-item';b.textContent='Overview';b.onclick=()=>switchTab('overview');bar.appendChild(b);}
+ if(!document.getElementById('panel-overview')){const p=document.createElement('div');p.id='panel-overview';p.className='tab-panel';base.before(p);}
+}
+function overviewItems_(){return allData.filter(r=>r.status!=='Cancelled').map(r=>({title:r.description||r.requestNo,project:r.project,status:r.status,due:r.submissionDate,kind:'Request'})).concat(teamTracker.filter(t=>t.category!=='Tracker Tasks'&&!t.isMilestone&&t.status!=='Archived').map(t=>({title:t.task,project:t.project,status:t.status,due:t.endDate,kind:'Task'})));}
+function renderOverview_(){
+ const panel=document.getElementById('panel-overview');if(!panel||!currentUser)return;
+ const items=overviewItems_(),open=items.filter(t=>t.status!=='Done'),today=new Date();today.setHours(0,0,0,0);
+ const late=open.filter(t=>t.kind==='Task'&&parseDMY(t.due)&&parseDMY(t.due)<today);
+ panel.innerHTML=`<div style="padding:24px"><h2>Overview</h2><p style="color:var(--ink-mid);margin:8px 0 20px">A summary of the work you already have access to. Your existing tabs are unchanged.</p><div class="dash-row"><section class="dash-section" style="padding:20px"><h3>${open.length} open items</h3><p>${late.length} overdue tasks · ${items.filter(t=>t.status==='Done').length} completed</p><p>Request submission dates are not treated as agreed deadlines here.</p><button class="btn btn-ghost btn-sm" onclick="switchTab('requests')">Open Requests</button></section><section class="dash-section" style="padding:20px"><h3>Work needing attention</h3>${late.slice(0,5).map(t=>`<p>${esc(t.title||'Task')} · ${esc(t.project||'No project')}</p>`).join('')||'<p>No overdue tasks in your visible work.</p>'}</section></div>${managerUnlocked?`<section class="dash-section" style="padding:20px"><h3>Performance review · Managers only</h3><p>New monthly review and controlled award publication. Existing Dashboard and annual evaluations remain available.</p><div style="display:flex;gap:12px;flex-wrap:wrap;margin:16px 0"><label>Specialist <select id="ovSpecialist">${assignees.map(a=>`<option value="${esc(a.name)}">${esc(a.name)}</option>`).join('')}</select></label><label>Month <input type="month" id="ovMonth" value="${overviewMonth_()}"></label><button class="btn btn-primary" onclick="loadOverviewReview_()">Load review</button></div><div id="ovReview" aria-live="polite">Choose a specialist and month.</div></section>`:''}</div>`;
+ overviewReview=null;overviewRead++;
+}
+function overviewMonth_(){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+async function loadOverviewReview_(){
+ if(!managerUnlocked||overviewBusy)return;const n=++overviewRead;
+ const scope={specialist:document.getElementById('ovSpecialist').value,month:document.getElementById('ovMonth').value};
+ document.getElementById('ovReview').textContent='Loading review…';overviewReview=null;
+ try{const b=await sendTrackerRequest_({action:'getPerformanceReview',...scope});if(n!==overviewRead||!managerUnlocked)return;overviewReview={...b,scope};renderOverviewReview_();}catch(e){if(n===overviewRead&&document.getElementById('ovReview'))document.getElementById('ovReview').textContent=e.message;}
+}
+function overviewRating_(key,label,weight){const r=overviewReview.draft.value.ratings||{};return `<label style="display:block;margin:12px 0">${label} · ${weight}% <select id="ov-${key}"><option value="">Select</option>${[1,2,3,4,5].map(n=>`<option value="${n}" ${r[key]===n?'selected':''}>${n} — ${['Needs substantial improvement','Partly meets expectations','Meets expectations','Exceeds expectations','Exceptional'][n-1]}</option>`).join('')}</select></label>`;}
+function renderOverviewReview_(){
+ if(!managerUnlocked||!overviewReview)return;
+ const b=overviewReview,m=b.metrics,a=b.award.value;
+ document.getElementById('ovReview').innerHTML=`<h3>${esc(b.scope.specialist)} · ${esc(b.scope.month)}</h3><p>Provisional score: <strong>${b.score===null?'Incomplete':b.score+' / 100'}</strong></p><p>${m.completed} completed this month · ${m.reviewed} reviewed · ${m.due} items due this month</p><p>Delivery: ${m.onTime===null?'Insufficient dates':Math.round(m.onTime)+'%'} × 25% · Completed contribution: ${m.contribution===null?'Insufficient dates / complexity':Math.round(m.contribution)+'%'} × 20%</p><p>Contribution = reviewed complexity points completed by month-end ÷ complexity points due this month. Simple / Medium / Complex = 1 / 2 / 3 points. Delivery uses work completed in the month. Draft scores can change; approved awards are frozen.</p>${m.missingCompletion?`<p style="color:var(--red)">${m.missingCompletion} completed items have no completion date. Resolve these before final scoring.</p>`:''}<details style="margin:18px 0"><summary>Work evidence: agreed due dates, complexity and review</summary><p>These fields supplement the existing records. Enter the agreed deadline and a reason; original task dates are not overwritten.</p><input id="ovSearch" aria-label="Find work evidence" placeholder="Find work item…" oninput="renderOverviewEvidence_()" style="padding:8px;margin:10px 0"><div id="ovEvidence"></div></details>${overviewRating_('quality','Quality and accuracy',35)}${overviewRating_('collaboration','Collaboration and support',10)}${overviewRating_('improvement','Improvement and knowledge sharing',10)}<label>Supporting notes<textarea id="ovNotes" rows="3" maxlength="4000" style="display:block;width:100%">${esc(b.draft.value.notes||'')}</textarea></label><button class="btn btn-primary" style="margin:12px 0" onclick="saveOverviewReview_()">Save monthly evaluation</button><hr><h3 style="margin-top:16px">Employee of the Month · ${esc(b.scope.month)}</h3>${a.approvedBy?`<p>Approved: <strong>${esc(a.specialist)}</strong> · Frozen score ${a.score} / 100</p><p>${esc(a.reason)}</p><p>Publication: <strong>${a.published?'Published':'Not published'}</strong></p><button class="btn btn-ghost btn-sm" onclick="overviewWrite_('${a.published?'unpublish':'publish'}PerformanceAward',{expectedVersion:overviewReview.award.version})">${a.published?'Unpublish award':'Publish approved award'}</button>`:'<p>No approved award. Nothing is published automatically.</p>'}<p>Publication is visible only to managers under the current permissions. No email is sent. You can leave any month without an award.</p><label>Candidate selection reason<textarea id="ovReason" rows="2" maxlength="4000" style="display:block;width:100%"></textarea></label><button class="btn btn-ghost btn-sm" style="margin:12px 0" onclick="approveOverviewAward_()">Approve selected specialist privately</button><p>Approval requires a closed month, a complete evaluation, five reviewed completions and full date coverage.</p><p id="ovMessage" role="status"></p>`;
+ renderOverviewEvidence_();
+}
+function renderOverviewEvidence_(){
+ if(!overviewReview||!managerUnlocked)return;const q=(document.getElementById('ovSearch').value||'').toLowerCase();
+ const rows=overviewReview.items.map((t,i)=>({t,i})).filter(({t})=>(t.title||'').toLowerCase().includes(q));
+ document.getElementById('ovEvidence').innerHTML=`<p>Showing ${Math.min(20,rows.length)} of ${rows.length}. Search to find another item.</p>`+rows.slice(0,20).map(({t,i})=>`<div style="padding:12px 0;border-bottom:1px solid var(--grey-hair)"><strong>${esc(t.title)}</strong><p>${esc(t.status)} · Completion: ${esc(t.completed||'Unknown')}</p><label>Agreed due <input type="date" id="ovDue${i}" value="${esc(t.meta.due||'')}"></label> <label>Complexity <select id="ovComplex${i}"><option value="">Select</option>${[1,2,3].map((n)=>`<option value="${n}" ${t.meta.complexity===n?'selected':''}>${['Simple','Medium','Complex'][n-1]}</option>`).join('')}</select></label> <label><input type="checkbox" id="ovReviewed${i}" ${t.meta.reviewed?'checked':''}> Output reviewed</label><label style="display:block">Agreement / change reason <input id="ovWhy${i}" maxlength="1000" value="${esc(t.meta.reason||'')}" style="width:70%"></label><button class="btn btn-ghost btn-sm" onclick="saveOverviewItem_(${i})">Save evidence</button></div>`).join('');
+}
+async function overviewWrite_(action,extra){
+ if(!managerUnlocked||!overviewReview||overviewBusy)return;
+ overviewBusy=true;const p=document.getElementById('ovReview');p.querySelectorAll('button,input,select,textarea').forEach(e=>e.disabled=true);
+ try{await secureSaveWithRetry_({action,...overviewReview.scope,...extra});overviewBusy=false;await loadOverviewReview_();}
+ catch(e){if(document.getElementById('ovMessage'))document.getElementById('ovMessage').textContent=e.message;p.querySelectorAll('button,input,select,textarea').forEach(e=>e.disabled=false);overviewBusy=false;}
+}
+function saveOverviewItem_(i){const t=overviewReview.items[i];overviewWrite_('savePerformanceItem',{itemId:t.id,expectedVersion:t.version,due:document.getElementById('ovDue'+i).value,complexity:Number(document.getElementById('ovComplex'+i).value),reviewed:document.getElementById('ovReviewed'+i).checked,reason:document.getElementById('ovWhy'+i).value});}
+function saveOverviewReview_(){overviewWrite_('savePerformanceReview',{expectedVersion:overviewReview.draft.version,ratings:Object.fromEntries(['quality','collaboration','improvement'].map(k=>[k,Number(document.getElementById('ov-'+k).value)])),notes:document.getElementById('ovNotes').value});}
+function approveOverviewAward_(){overviewWrite_('approvePerformanceAward',{expectedVersion:overviewReview.award.version,reason:document.getElementById('ovReason').value});}
+installOverview_();
 </script>
 </body>
 </html>
