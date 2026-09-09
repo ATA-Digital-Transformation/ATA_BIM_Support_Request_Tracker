@@ -8276,6 +8276,61 @@ function saveOverviewItem_(i){const t=overviewReview.items[i];overviewWrite_('sa
 function saveOverviewReview_(){overviewWrite_('savePerformanceReview',{expectedVersion:overviewReview.draft.version,ratings:Object.fromEntries(['quality','collaboration','improvement'].map(k=>[k,Number(document.getElementById('ov-'+k).value)])),notes:document.getElementById('ovNotes').value});}
 function approveOverviewAward_(){overviewWrite_('approvePerformanceAward',{expectedVersion:overviewReview.award.version,reason:document.getElementById('ovReason').value});}
 installOverview_();
+
+// Move existing controls, never clone them or change their saved values.
+function arrangeManagerSettings_(){
+ const panel=document.getElementById('mpanel-settings');if(!panel||panel.dataset.organized)return;
+ panel.dataset.organized='true';
+ const groups=Array.from(panel.children).filter(e=>e.classList.contains('settings-group'));
+ const title=g=>g.querySelector('.settings-group-title')?.textContent.trim();
+ function group(label){const g=document.createElement('div');g.className='settings-group';const h=document.createElement('div');h.className='settings-group-title';h.textContent=label;g.append(h);groups.push(g);return g;}
+ const visibility=group('Request access'),assignment=group('Assignment defaults');
+ ['cfg-requesterVisibility','cfg-specialistVisibility','cfg-importRequestsVisibility'].forEach(id=>{const row=document.getElementById(id)?.closest('.settings-row');if(row)visibility.append(row);});
+ ['cfg-autoFillSpecialistFromProject','cfg-restrictCategoryByRole'].forEach(id=>{const row=document.getElementById(id)?.closest('.settings-row');if(row)assignment.append(row);});
+ // Its rows moved to their own section; remove only the now-empty heading.
+ panel.querySelectorAll('.settings-subhead').forEach(h=>{if(h.textContent.includes('Smart Defaults'))h.remove();else if(h.textContent.trim()==='Visibility Rules')h.textContent='Request list display';});
+ const descriptions={
+  'Access & Permissions':'Who can view or edit work. Display filters below do not grant additional access.',
+  'Requests & Tasks':'Assignment defaults, task statuses and workload rules.',
+  'Appearance & Navigation':'Team defaults for views, tables, tab labels and widgets. Supported personal preferences may override display defaults, never permissions.',
+  'Notifications':'Email delivery and the in-app notification bell are separate controls.',
+  'Evaluation & Awards':'The new monthly review is managed in Overview. Existing annual evaluations remain in Dashboard.',
+  'Advanced':'Save retries and recovery of pending changes. These do not control how long sign-in is remembered.'
+ };
+ const categories={
+  'Request access':'Access & Permissions','Team Tab Access':'Access & Permissions','Admins & Reporting':'Access & Permissions','My-To-Do Permissions':'Access & Permissions',
+  'Assignment defaults':'Requests & Tasks','Task Statuses':'Requests & Tasks',
+  'Email Settings':'Notifications','Notification Center Settings':'Notifications','Reliability & Offline Recovery':'Advanced'
+ };
+ const intro=panel.querySelector('.settings-info');
+ if(intro)intro.innerHTML='<b>Manager Settings</b> — team-wide configuration. Personal display preferences remain in each specialist’s <b>My Settings</b>. Grouping and search do not save changes. Use the existing Save buttons.';
+ const nav=document.createElement('div');nav.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin:12px 0';
+ const search=document.createElement('input');search.type='search';search.placeholder='Find a setting…';search.setAttribute('aria-label','Find a setting');search.style.cssText='padding:9px;flex:1;min-width:180px;border:1px solid var(--grey-hair);background:var(--white);color:var(--ink)';nav.append(search);
+ const status=document.createElement('p');status.setAttribute('role','status');status.className='settings-info';
+ const holder=document.createElement('div');holder.id='settingsSections';
+ panel.insertBefore(nav,groups.find(g=>g.parentNode===panel)||panel.lastElementChild);nav.after(status,holder);
+ const sections={};
+ Object.entries(descriptions).forEach(([name,description],i)=>{
+  const d=document.createElement('details');d.open=name!=='Advanced';d.style.cssText='border:1px solid var(--grey-hair);border-radius:4px;padding:14px;margin:12px 0';
+  const h=document.createElement('summary');h.textContent=name;h.style.cssText='font-weight:700;cursor:pointer;font-size:14px';
+  const p=document.createElement('p');p.className='settings-info';p.style.margin='10px 0';p.textContent=description;d.append(h,p);holder.append(d);sections[name]=d;
+ });
+ groups.forEach(g=>sections[categories[title(g)]||'Appearance & Navigation'].append(g));
+ const info=group('Monthly review rules');
+ info.innerHTML='<div class="settings-group-title">Monthly review rules</div><p class="settings-info">Current test rules: quality 35%, delivery 25%, contribution 20%, collaboration 10%, improvement 10%. Complexity points: Simple 1, Medium 2, Complex 3. Awards require a closed month, five reviewed completions and complete timing data. These rules are currently fixed, not editable settings.</p><p class="settings-info" style="margin-top:8px">Manager approval and publication are separate actions. Approval alone does not publish an award or send an email. Published awards remain manager-only under current permissions.</p>';
+ const open=document.createElement('button');open.type='button';open.className='btn btn-ghost btn-sm';open.textContent='Open monthly reviews in Overview';open.onclick=()=>{if(managerUnlocked)switchTab('overview');};info.append(open);sections['Evaluation & Awards'].append(info);
+ function apply(){const q=search.value.trim().toLowerCase();let count=0;
+  Object.values(sections).forEach(d=>{let visible=0;Array.from(d.children).filter(g=>g.classList.contains('settings-group')).forEach(g=>{const match=!q||g.textContent.toLowerCase().includes(q);g.hidden=!match;if(match){visible++;count++;}});d.hidden=!visible;if(q&&visible)d.open=true;});
+  status.textContent=q?(count?count+' matching settings groups':'No matching settings. Try a shorter term.'):'All settings groups shown.';
+ }
+ search.oninput=apply;
+ const clear=document.createElement('button');clear.type='button';clear.className='btn btn-ghost';clear.textContent='Clear search';clear.onclick=()=>{search.value='';apply();};nav.append(clear);
+ const expand=document.createElement('button');expand.type='button';expand.className='btn btn-ghost';expand.textContent='Expand all';expand.onclick=()=>Object.values(sections).forEach(d=>d.open=true);nav.append(expand);
+ const collapse=document.createElement('button');collapse.type='button';collapse.className='btn btn-ghost';collapse.textContent='Collapse all';collapse.onclick=()=>Object.values(sections).forEach(d=>d.open=false);nav.append(collapse);
+ const save=panel.lastElementChild;if(save!==holder){const note=document.createElement('p');note.className='settings-info';note.textContent='Save Settings applies the existing general settings form, including collapsed groups. Tab Settings and Apply Schedule keep their separate Save actions. Reset reloads saved values; it does not reset permissions to defaults.';save.before(note);}
+ apply();
+}
+arrangeManagerSettings_();
 </script>
 </body>
 </html>
