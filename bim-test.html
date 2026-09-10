@@ -8344,19 +8344,27 @@ arrangeManagerSettings_();
 // Project lifecycle is independent of task completion and scheduling.
 const projectStates_=['Active','Done','On Hold','TBC'];
 let hiddenProjectStates_=new Set();
+let projectEditorSelection_='';
+function projectEditorHtml_(name,tasks){
+ if(!managerUnlocked)return '';
+ const names=[...new Set(tasks.map(t=>t.project).filter(Boolean))].sort();
+ const selected=names.includes(projectEditorSelection_)?projectEditorSelection_:names.includes(ttFilters.project)?ttFilters.project:names.find(n=>projects.some(p=>p.name===n))||names[0]||'';
+ const registered=projects.some(p=>p.name===selected);
+ return `<div class="tt-toolbar-section"><label>Update project <select aria-label="Project to update" onchange="projectEditorSelection_=this.value;renderMyToDo('${jsStringContent_(name)}')"><option value="">Select project</option>${names.map(p=>`<option value="${esc(p)}" ${p===selected?'selected':''}>${esc(p)}</option>`).join('')}</select></label>${registered?`<label>Project status <select aria-label="Overall project status" onchange="saveProjectState_('${jsStringContent_(selected)}',this.value)">${projectStates_.map(s=>`<option value="${s}" ${projectState_(selected)===s?'selected':''}>${s}</option>`).join('')}</select></label>`:selected?'<span>Add this exact project name under Manage → Projects to set its status.</span>':''}</div>`;
+}
 function projectState_(name){const p=projects.find(p=>p.name===name);return p&&projectStates_.includes(p.status)?p.status:'Active';}
 const priorTTProjectFilters_=applyTTFilters;
 applyTTFilters=function(tasks){return priorTTProjectFilters_(tasks).filter(t=>!hiddenProjectStates_.has(projectState_(t.project)));};
 const priorTTProjectBar_=ttFilterBarHtml;
-ttFilterBarHtml=function(name,tasks){return priorTTProjectBar_(name,tasks)+`<div class="tt-toolbar-section"><span>Show projects:</span>${projectStates_.map(s=>`<label style="display:inline-flex;gap:5px;align-items:center;margin:4px 8px"><input type="checkbox" ${hiddenProjectStates_.has(s)?'':'checked'} onchange="toggleProjectStateFilter_('${jsStringContent_(name)}','${s}',this.checked)">${s}</label>`).join('')}</div>`;};
+ttFilterBarHtml=function(name,tasks){return priorTTProjectBar_(name,tasks)+`<div class="tt-toolbar-section"><span>Show projects:</span>${projectStates_.map(s=>`<label style="display:inline-flex;gap:5px;align-items:center;margin:4px 8px"><input type="checkbox" ${hiddenProjectStates_.has(s)?'':'checked'} onchange="toggleProjectStateFilter_('${jsStringContent_(name)}','${s}',this.checked)">${s}</label>`).join('')}</div>`+projectEditorHtml_(name,tasks);};
 function toggleProjectStateFilter_(name,status,show){if(show)hiddenProjectStates_.delete(status);else hiddenProjectStates_.add(status);renderMyToDo(name);}
 const priorClearProjectFilters_=clearTTFilterBar;
 clearTTFilterBar=function(name){hiddenProjectStates_.clear();priorClearProjectFilters_(name);};
 async function saveProjectState_(name,status){
  if(!managerUnlocked)return;
  const p=projects.find(p=>p.name===name);if(!p)return;
- try{showToast('Saving…','loading');const result=await secureSaveWithRetry_({action:'setProjectStatus',name,status,expectedStatus:p.status||'Active'});p.status=result.status;showToast('Project status saved','success');if(currentMyToDoName)renderMyToDo(currentMyToDoName);}
- catch(e){showToast(e.message,'error');renderManageLists();}
+ try{showToast('Saving…','loading');const result=await secureSaveWithRetry_({action:'setProjectStatus',name,status,expectedStatus:p.status||'Active'});p.status=result.status;renderManageLists();showToast('Project status saved','success');if(currentMyToDoName)renderMyToDo(currentMyToDoName);}
+ catch(e){showToast(e.message,'error');renderManageLists();if(currentMyToDoName)renderMyToDo(currentMyToDoName);}
 }
 </script>
 </body>
