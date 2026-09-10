@@ -6501,7 +6501,7 @@ function switchManageTab(tab){
   if(tab==="mytodocats"){renderMyTodoCategoriesList();}
 }
 function renderManageLists(){
-  document.getElementById("projectsList").innerHTML=projects.map(p=>`<div class="manage-row"><div class="manage-row-main"><div class="manage-row-name">${esc(p.name)}</div>${p.defaultSpecialist?`<div class="manage-row-sub">Default: ${esc(p.defaultSpecialist)}</div>`:""}</div><button class="manage-row-del" onclick="manageAction({action:'deleteProject',name:'${jsStringContent_(p.name)}'},'Project removed')">🗑</button></div>`).join("")||`<div style="color:var(--ink-mid);font-size:12px;padding:8px;">No projects yet.</div>`;
+  document.getElementById("projectsList").innerHTML=projects.map(p=>`<div class="manage-row"><div class="manage-row-main"><div class="manage-row-name">${esc(p.name)}</div>${managerUnlocked?`<label>Project status <select onchange="saveProjectState_('${jsStringContent_(p.name)}',this.value)">${["Active","Done","On Hold","TBC"].map(s=>`<option value="${s}" ${(p.status||"Active")===s?"selected":""}>${s}</option>`).join("")}</select></label>`:""}${p.defaultSpecialist?`<div class="manage-row-sub">Default: ${esc(p.defaultSpecialist)}</div>`:""}</div><button class="manage-row-del" onclick="manageAction({action:'deleteProject',name:'${jsStringContent_(p.name)}'},'Project removed')">🗑</button></div>`).join("")||`<div style="color:var(--ink-mid);font-size:12px;padding:8px;">No projects yet.</div>`;
 
   document.getElementById("assigneesList").innerHTML=assignees.map(a=>{
     const slug=cssSlug(a.name);
@@ -8340,6 +8340,24 @@ function arrangeManagerSettings_(){
  apply();
 }
 arrangeManagerSettings_();
+
+// Project lifecycle is independent of task completion and scheduling.
+const projectStates_=['Active','Done','On Hold','TBC'];
+let hiddenProjectStates_=new Set();
+function projectState_(name){const p=projects.find(p=>p.name===name);return p&&projectStates_.includes(p.status)?p.status:'Active';}
+const priorTTProjectFilters_=applyTTFilters;
+applyTTFilters=function(tasks){return priorTTProjectFilters_(tasks).filter(t=>!hiddenProjectStates_.has(projectState_(t.project)));};
+const priorTTProjectBar_=ttFilterBarHtml;
+ttFilterBarHtml=function(name,tasks){return priorTTProjectBar_(name,tasks)+`<div class="tt-toolbar-section"><span>Show projects:</span>${projectStates_.map(s=>`<label style="display:inline-flex;gap:5px;align-items:center;margin:4px 8px"><input type="checkbox" ${hiddenProjectStates_.has(s)?'':'checked'} onchange="toggleProjectStateFilter_('${jsStringContent_(name)}','${s}',this.checked)">${s}</label>`).join('')}</div>`;};
+function toggleProjectStateFilter_(name,status,show){if(show)hiddenProjectStates_.delete(status);else hiddenProjectStates_.add(status);renderMyToDo(name);}
+const priorClearProjectFilters_=clearTTFilterBar;
+clearTTFilterBar=function(name){hiddenProjectStates_.clear();priorClearProjectFilters_(name);};
+async function saveProjectState_(name,status){
+ if(!managerUnlocked)return;
+ const p=projects.find(p=>p.name===name);if(!p)return;
+ try{showToast('Saving…','loading');const result=await secureSaveWithRetry_({action:'setProjectStatus',name,status,expectedStatus:p.status||'Active'});p.status=result.status;showToast('Project status saved','success');if(currentMyToDoName)renderMyToDo(currentMyToDoName);}
+ catch(e){showToast(e.message,'error');renderManageLists();}
+}
 </script>
 </body>
 </html>
